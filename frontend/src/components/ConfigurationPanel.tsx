@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
-interface ConfigPanelProps {
+interface ConfigurationPanelProps {
     onConfigChange: (config: any) => void;
-    projectId?: string;
+    projectId: string;
 }
 
-export default function ConfigurationPanel({ onConfigChange, projectId }: ConfigPanelProps) {
+export default function ConfigurationPanel({ onConfigChange, projectId }: ConfigurationPanelProps) {
     const [setbacks, setSetbacks] = useState({
         front: 3.0,
         back: 2.0,
@@ -15,16 +15,8 @@ export default function ConfigurationPanel({ onConfigChange, projectId }: Config
         right: 1.5,
     });
 
-    const [layout, setLayout] = useState({
-        strategy: 'compact',
-        floors: 2,
-    });
-
-    const [zones, setZones] = useState({
-        public: 40,
-        private: 40,
-        service: 20,
-    });
+    const [strategy, setStrategy] = useState('compact');
+    const [floors, setFloors] = useState(2);
 
     const strategies = [
         { id: 'compact', name: 'Compact', desc: 'Efficient rectangular layout' },
@@ -32,144 +24,123 @@ export default function ConfigurationPanel({ onConfigChange, projectId }: Config
         { id: 'courtyard', name: 'Courtyard', desc: 'Central courtyard design' },
     ];
 
-    const handleSetbackChange = (key: string, value: number) => {
-        const newSetbacks = { ...setbacks, [key]: value };
-        setSetbacks(newSetbacks);
-        onConfigChange({ setbacks: newSetbacks, layout, zones });
-    };
+    useEffect(() => {
+        onConfigChange({
+            setbacks,
+            layout: { strategy, floors },
+            zones: { public: 40, private: 40, service: 20 },
+        });
+    }, [setbacks, strategy, floors]);
 
-    const handleZoneChange = (key: string, value: number) => {
-        const remaining = 100 - value;
-        const others = Object.keys(zones).filter(k => k !== key);
-        const newZones = {
-            ...zones,
-            [key]: value,
-            [others[0]]: Math.round(remaining / 2),
-            [others[1]]: remaining - Math.round(remaining / 2),
-        };
-        setZones(newZones);
-        onConfigChange({ setbacks, layout, zones: newZones });
+    const handleSetbackChange = (side: string, value: string) => {
+        setSetbacks(prev => ({
+            ...prev,
+            [side]: parseFloat(value) || 0,
+        }));
     };
 
     return (
-        <div className="bg-gray-800/50 backdrop-blur rounded-xl p-6 space-y-6 border border-gray-700">
-            <div>
-                <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="card">
+            <div className="card-header">
+                <h3>
+                    <svg style={{ width: 18, height: 18, color: 'var(--primary-500)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                     Configuration
                 </h3>
             </div>
-
-            {/* Setbacks Section */}
-            <div className="space-y-4">
-                <h4 className="text-sm font-medium text-gray-300 uppercase tracking-wider">Setbacks (meters)</h4>
-                <div className="grid grid-cols-2 gap-4">
-                    {Object.entries(setbacks).map(([key, value]) => (
-                        <div key={key}>
-                            <label className="block text-xs text-gray-400 mb-1 capitalize">{key}</label>
+            <div className="card-body">
+                {/* Setbacks */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                    <div className="form-label" style={{ marginBottom: '0.75rem' }}>Setbacks (meters)</div>
+                    <div className="form-row">
+                        <div className="form-group">
+                            <label className="form-label">Front</label>
                             <input
                                 type="number"
                                 step="0.5"
-                                min="0"
-                                max="10"
-                                value={value}
-                                onChange={(e) => handleSetbackChange(key, parseFloat(e.target.value))}
-                                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                value={setbacks.front}
+                                onChange={(e) => handleSetbackChange('front', e.target.value)}
+                                className="form-input"
                             />
                         </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* Layout Strategy */}
-            <div className="space-y-3">
-                <h4 className="text-sm font-medium text-gray-300 uppercase tracking-wider">Layout Strategy</h4>
-                <div className="space-y-2">
-                    {strategies.map((strategy) => (
-                        <label
-                            key={strategy.id}
-                            className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all ${layout.strategy === strategy.id
-                                    ? 'bg-blue-600/20 border border-blue-500'
-                                    : 'bg-gray-700/50 border border-transparent hover:bg-gray-700'
-                                }`}
-                        >
+                        <div className="form-group">
+                            <label className="form-label">Back</label>
                             <input
-                                type="radio"
-                                name="strategy"
-                                value={strategy.id}
-                                checked={layout.strategy === strategy.id}
-                                onChange={(e) => {
-                                    const newLayout = { ...layout, strategy: e.target.value };
-                                    setLayout(newLayout);
-                                    onConfigChange({ setbacks, layout: newLayout, zones });
+                                type="number"
+                                step="0.5"
+                                value={setbacks.back}
+                                onChange={(e) => handleSetbackChange('back', e.target.value)}
+                                className="form-input"
+                            />
+                        </div>
+                    </div>
+                    <div className="form-row">
+                        <div className="form-group">
+                            <label className="form-label">Left</label>
+                            <input
+                                type="number"
+                                step="0.5"
+                                value={setbacks.left}
+                                onChange={(e) => handleSetbackChange('left', e.target.value)}
+                                className="form-input"
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Right</label>
+                            <input
+                                type="number"
+                                step="0.5"
+                                value={setbacks.right}
+                                onChange={(e) => handleSetbackChange('right', e.target.value)}
+                                className="form-input"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Layout Strategy */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                    <div className="form-label" style={{ marginBottom: '0.75rem' }}>Layout Strategy</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {strategies.map((s) => (
+                            <div
+                                key={s.id}
+                                className={`option-card ${strategy === s.id ? 'selected' : ''}`}
+                                onClick={() => setStrategy(s.id)}
+                            >
+                                <h4>{s.name}</h4>
+                                <p>{s.desc}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Number of Floors */}
+                <div>
+                    <div className="form-label" style={{ marginBottom: '0.75rem' }}>Number of Floors</div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        {[1, 2, 3, 4].map((num) => (
+                            <button
+                                key={num}
+                                onClick={() => setFloors(num)}
+                                className="floor-tab"
+                                style={{
+                                    flex: 1,
+                                    background: floors === num ? 'var(--primary-500)' : 'var(--slate-100)',
+                                    color: floors === num ? 'white' : 'var(--text-secondary)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    padding: '0.625rem',
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
                                 }}
-                                className="hidden"
-                            />
-                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${layout.strategy === strategy.id ? 'border-blue-500' : 'border-gray-500'
-                                }`}>
-                                {layout.strategy === strategy.id && (
-                                    <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                                )}
-                            </div>
-                            <div>
-                                <div className="text-sm font-medium text-white">{strategy.name}</div>
-                                <div className="text-xs text-gray-400">{strategy.desc}</div>
-                            </div>
-                        </label>
-                    ))}
-                </div>
-            </div>
-
-            {/* Floor Count */}
-            <div className="space-y-3">
-                <h4 className="text-sm font-medium text-gray-300 uppercase tracking-wider">Number of Floors</h4>
-                <div className="flex gap-2">
-                    {[1, 2, 3, 4].map((num) => (
-                        <button
-                            key={num}
-                            onClick={() => {
-                                const newLayout = { ...layout, floors: num };
-                                setLayout(newLayout);
-                                onConfigChange({ setbacks, layout: newLayout, zones });
-                            }}
-                            className={`flex-1 py-2 rounded-lg font-medium transition-all ${layout.floors === num
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                                }`}
-                        >
-                            {num}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            {/* Zone Distribution */}
-            <div className="space-y-3">
-                <h4 className="text-sm font-medium text-gray-300 uppercase tracking-wider">Zone Distribution</h4>
-                <div className="space-y-3">
-                    {[
-                        { key: 'public', label: 'Public', color: 'bg-blue-500' },
-                        { key: 'private', label: 'Private', color: 'bg-purple-500' },
-                        { key: 'service', label: 'Service', color: 'bg-orange-500' },
-                    ].map(({ key, label, color }) => (
-                        <div key={key}>
-                            <div className="flex justify-between text-xs mb-1">
-                                <span className="text-gray-400">{label}</span>
-                                <span className="text-white">{zones[key as keyof typeof zones]}%</span>
-                            </div>
-                            <input
-                                type="range"
-                                min="10"
-                                max="60"
-                                value={zones[key as keyof typeof zones]}
-                                onChange={(e) => handleZoneChange(key, parseInt(e.target.value))}
-                                className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${color}`}
-                            />
-                        </div>
-                    ))}
+                            >
+                                {num}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
         </div>

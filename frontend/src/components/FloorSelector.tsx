@@ -7,25 +7,23 @@ interface FloorSelectorProps {
 }
 
 export default function FloorSelector({ floors, activeFloor, onFloorSelect }: FloorSelectorProps) {
-    const floorNames: Record<number, string> = {
-        0: 'Ground Floor',
-        1: 'First Floor',
-        2: 'Second Floor',
-        3: 'Third Floor',
+    const getFloorName = (floor: number) => {
+        if (floor === 0) return 'Ground Floor';
+        if (floor === 1) return 'First Floor';
+        if (floor === 2) return 'Second Floor';
+        if (floor === 3) return 'Third Floor';
+        return `Floor ${floor}`;
     };
 
     return (
-        <div className="flex gap-2 p-1 bg-gray-800 rounded-lg">
-            {floors.map((floor) => (
+        <div className="floor-tabs">
+            {floors.map(floor => (
                 <button
                     key={floor}
                     onClick={() => onFloorSelect(floor)}
-                    className={`px-4 py-2 rounded-md font-medium transition-all ${activeFloor === floor
-                            ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
-                            : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                        }`}
+                    className={`floor-tab ${activeFloor === floor ? 'active' : ''}`}
                 >
-                    {floorNames[floor] || `Floor ${floor}`}
+                    {getFloorName(floor)}
                 </button>
             ))}
         </div>

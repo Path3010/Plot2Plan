@@ -7,10 +7,18 @@ import ConfigurationPanel from '@/components/ConfigurationPanel';
 import ScoreDisplay from '@/components/ScoreDisplay';
 import FloorSelector from '@/components/FloorSelector';
 
+interface HoleData {
+  id: number;
+  coordinates: [number, number][];
+  area_sqm: number;
+}
+
 interface ProjectData {
   project_id: string;
   filename: string;
   boundary: [number, number][];
+  holes?: HoleData[];
+  has_holes?: boolean;
   area_sqm: number;
   area_sqft: number;
 }
@@ -112,77 +120,73 @@ export default function Home() {
   const currentFloor = floors.find(f => f.floor_number === activeFloor);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+    <div style={{ minHeight: '100vh' }}>
       {/* Header */}
-      <header className="border-b border-gray-700/50 backdrop-blur-sm sticky top-0 z-50 bg-gray-900/80">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-white">Floor Plan Generator</h1>
-                <p className="text-xs text-gray-400">Rule-based architectural design</p>
-              </div>
+      <header className="app-header">
+        <div className="header-content">
+          <div className="logo-section">
+            <div className="logo-icon">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+              </svg>
             </div>
-
-            {project && (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-400">{project.filename}</span>
-                <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full">
-                  {project.area_sqm.toFixed(1)} m²
-                </span>
-                <button
-                  onClick={handleExport}
-                  className="px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg text-white text-sm font-medium hover:from-green-500 hover:to-emerald-500 transition-all"
-                >
-                  Export DXF
-                </button>
-              </div>
-            )}
+            <div className="logo-text">
+              <h1>Floor Plan Generator</h1>
+              <p>Rule-based architectural design</p>
+            </div>
           </div>
+
+          {project && (
+            <div className="header-actions">
+              <div className="file-badge">
+                <span className="file-name">{project.filename}</span>
+                <span className="area-badge">{project.area_sqm.toFixed(1)} m²</span>
+              </div>
+              <button onClick={handleExport} className="btn btn-success">
+                <svg style={{ width: 16, height: 16 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Export DXF
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="main-content">
         {error && (
-          <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-400">
-            {error}
+          <div className="error-alert">
+            <strong>Error:</strong> {error}
           </div>
         )}
 
         {!project ? (
           /* Upload Section */
-          <div className="max-w-2xl mx-auto">
-            <div className="text-center mb-8">
-              <h2 className="text-3xl font-bold text-white mb-2">Get Started</h2>
-              <p className="text-gray-400">Upload your plot boundary DXF file to begin generating floor plans</p>
-            </div>
+          <div className="welcome-section">
+            <h2 className="welcome-title">Get Started</h2>
+            <p className="welcome-subtitle">Upload your plot boundary DXF file to begin generating floor plans</p>
             <DXFUploader onUploadSuccess={handleUploadSuccess} onUploadError={handleUploadError} />
 
-            <div className="mt-8 grid grid-cols-3 gap-6">
+            <div className="feature-grid">
               {[
                 { icon: '📐', title: 'Any Shape', desc: 'Supports any polygon plot boundary' },
                 { icon: '🏠', title: 'Multi-Floor', desc: 'Generate floor by floor progressively' },
                 { icon: '📊', title: 'Smart Scoring', desc: 'AI-powered layout optimization' },
               ].map((feature, i) => (
-                <div key={i} className="p-4 bg-gray-800/50 rounded-xl border border-gray-700 text-center">
-                  <div className="text-3xl mb-2">{feature.icon}</div>
-                  <h3 className="font-medium text-white">{feature.title}</h3>
-                  <p className="text-xs text-gray-400 mt-1">{feature.desc}</p>
+                <div key={i} className="feature-card">
+                  <div className="feature-icon">{feature.icon}</div>
+                  <h3 className="feature-title">{feature.title}</h3>
+                  <p className="feature-desc">{feature.desc}</p>
                 </div>
               ))}
             </div>
           </div>
         ) : (
           /* Design Workspace */
-          <div className="grid grid-cols-12 gap-6">
+          <div className="workspace-grid">
             {/* Left Panel - Configuration */}
-            <div className="col-span-3 space-y-6">
+            <div className="panel-left">
               <ConfigurationPanel onConfigChange={handleConfigChange} projectId={project.project_id} />
 
               {currentFloor && (
@@ -191,8 +195,8 @@ export default function Home() {
             </div>
 
             {/* Center - Floor Plan Viewer */}
-            <div className="col-span-6 space-y-4">
-              <div className="flex items-center justify-between">
+            <div className="panel-center">
+              <div className="center-header">
                 <FloorSelector
                   floors={Array.from({ length: config.layout.floors }, (_, i) => i)}
                   activeFloor={activeFloor}
@@ -202,79 +206,85 @@ export default function Home() {
                 <button
                   onClick={handleGenerateFloor}
                   disabled={isGenerating}
-                  className={`px-6 py-2 rounded-lg font-medium transition-all ${isGenerating
-                      ? 'bg-gray-600 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500'
-                    } text-white`}
+                  className="btn btn-primary"
                 >
                   {isGenerating ? (
-                    <span className="flex items-center gap-2">
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        border: '2px solid rgba(255,255,255,0.3)',
+                        borderTopColor: 'white',
+                        borderRadius: '50%',
+                        animation: 'spin 1s linear infinite'
+                      }}></div>
                       Generating...
                     </span>
                   ) : (
-                    `Generate ${activeFloor === 0 ? 'Ground' : `Floor ${activeFloor}`}`
+                    `Generate ${activeFloor === 0 ? 'Ground Floor' : `Floor ${activeFloor}`}`
                   )}
                 </button>
               </div>
 
               <FloorPlanViewer
                 boundary={project.boundary}
+                holes={project.holes}
                 rooms={currentFloor?.rooms || []}
                 staircase={currentFloor?.staircase}
-                width={700}
-                height={550}
+                width={750}
+                height={500}
               />
 
-              {/* Floor Info */}
+              {/* Floor Stats */}
               {currentFloor && (
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
-                    <div className="text-sm text-gray-400">Rooms</div>
-                    <div className="text-2xl font-bold text-white">{currentFloor.rooms.length}</div>
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <div className="stat-label">Rooms</div>
+                    <div className="stat-value">{currentFloor.rooms.length}</div>
                   </div>
-                  <div className="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
-                    <div className="text-sm text-gray-400">Buildable Area</div>
-                    <div className="text-2xl font-bold text-white">{currentFloor.buildable_area_sqm.toFixed(1)} m²</div>
+                  <div className="stat-card">
+                    <div className="stat-label">Buildable Area</div>
+                    <div className="stat-value">{currentFloor.buildable_area_sqm.toFixed(1)} m²</div>
                   </div>
-                  <div className="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
-                    <div className="text-sm text-gray-400">Layout Score</div>
-                    <div className="text-2xl font-bold text-green-400">{Math.round(currentFloor.score.total * 100)}%</div>
+                  <div className="stat-card">
+                    <div className="stat-label">Layout Score</div>
+                    <div className="stat-value success">{Math.round(currentFloor.score.total * 100)}%</div>
                   </div>
                 </div>
               )}
             </div>
 
             {/* Right Panel - Room List */}
-            <div className="col-span-3">
-              <div className="bg-gray-800/50 backdrop-blur rounded-xl p-6 border border-gray-700">
-                <h3 className="text-lg font-semibold text-white mb-4">Rooms</h3>
-
-                {currentFloor && currentFloor.rooms.length > 0 ? (
-                  <div className="space-y-2">
-                    {currentFloor.rooms.map((room: any) => (
-                      <div
-                        key={room.id}
-                        className="p-3 bg-gray-700/50 rounded-lg flex items-center justify-between"
-                      >
-                        <div>
-                          <div className="text-sm font-medium text-white capitalize">
-                            {room.type.replace('_', ' ')}
+            <div className="panel-right">
+              <div className="card">
+                <div className="card-header">
+                  <h3>
+                    <svg style={{ width: 18, height: 18, color: 'var(--primary-500)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                    </svg>
+                    Rooms
+                  </h3>
+                </div>
+                <div className="card-body">
+                  {currentFloor && currentFloor.rooms.length > 0 ? (
+                    <div>
+                      {currentFloor.rooms.map((room: any) => (
+                        <div key={room.id} className={`room-item ${room.zone}`}>
+                          <div>
+                            <div className="room-name">{room.type.replace('_', ' ')}</div>
+                            <div className="room-zone">{room.zone}</div>
                           </div>
-                          <div className="text-xs text-gray-400">{room.zone}</div>
+                          <div className="room-area">{room.area_sqm.toFixed(1)} m²</div>
                         </div>
-                        <div className="text-sm text-gray-300">
-                          {room.area_sqm.toFixed(1)} m²
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    <p>No rooms generated yet</p>
-                    <p className="text-xs mt-1">Click Generate to create floor plan</p>
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <p>No rooms generated yet</p>
+                      <p className="hint">Click Generate to create floor plan</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

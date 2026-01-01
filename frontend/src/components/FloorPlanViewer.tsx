@@ -1,236 +1,271 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useRef, useEffect } from 'react';
 
-interface FloorPlanViewerProps {
-    boundary: [number, number][];
-    buildableArea?: [number, number][];
-    rooms?: {
-        id: string;
-        type: string;
-        polygon: [number, number][];
-        zone: string;
-    }[];
-    staircase?: {
-        polygon: [number, number][];
-    };
-    width?: number;
-    height?: number;
+interface Hole {
+  id: number;
+  coordinates: [number, number][];
+  area_sqm: number;
 }
 
-const ZONE_COLORS: Record<string, string> = {
-    public: '#3B82F6',    // Blue
-    private: '#8B5CF6',   // Purple
-    service: '#F59E0B',   // Orange
-    circulation: '#6B7280', // Gray
+interface Room {
+  id: string;
+  type: string;
+  zone: 'public' | 'private' | 'service';
+  polygon: [number, number][];
+  area_sqm: number;
+}
+
+interface FloorPlanViewerProps {
+  boundary: [number, number][];
+  holes?: Hole[];
+  rooms: Room[];
+  staircase?: { polygon: [number, number][] };
+  width: number;
+  height: number;
+}
+
+const ZONE_COLORS = {
+  public: { fill: '#3b82f6', stroke: '#2563eb', label: 'Public' },
+  private: { fill: '#8b5cf6', stroke: '#7c3aed', label: 'Private' },
+  service: { fill: '#f59e0b', stroke: '#d97706', label: 'Service' },
 };
 
-const ROOM_COLORS: Record<string, string> = {
-    living_room: '#60A5FA',
-    dining_room: '#34D399',
-    kitchen: '#FBBF24',
-    master_bedroom: '#A78BFA',
-    bedroom: '#C4B5FD',
-    bathroom: '#67E8F9',
-    study: '#FCD34D',
-    utility: '#9CA3AF',
-    foyer: '#E5E7EB',
-};
+export default function FloorPlanViewer({ boundary, holes, rooms, staircase, width, height }: FloorPlanViewerProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-export default function FloorPlanViewer({
-    boundary,
-    buildableArea,
-    rooms = [],
-    staircase,
-    width = 600,
-    height = 500,
-}: FloorPlanViewerProps) {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas || !boundary.length) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+    // Clear canvas
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, width, height);
 
-        // Calculate bounds
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        boundary.forEach(([x, y]) => {
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-        });
+    // Draw grid
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 0.5;
+    const gridSize = 20;
+    for (let x = 0; x <= width; x += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= height; y += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
 
-        const plotWidth = maxX - minX;
-        const plotHeight = maxY - minY;
-        const padding = 40;
-        const scale = Math.min(
-            (width - padding * 2) / plotWidth,
-            (height - padding * 2) / plotHeight
-        );
+    if (boundary.length < 3) return;
 
-        const offsetX = (width - plotWidth * scale) / 2;
-        const offsetY = (height - plotHeight * scale) / 2;
+    // Calculate bounds (include holes in calculation)
+    let allPoints = [...boundary];
+    if (holes) {
+      holes.forEach(hole => {
+        allPoints = allPoints.concat(hole.coordinates);
+      });
+    }
 
-        const transform = (x: number, y: number): [number, number] => [
-            (x - minX) * scale + offsetX,
-            height - ((y - minY) * scale + offsetY), // Flip Y for canvas
-        ];
+    const xs = allPoints.map(p => p[0]);
+    const ys = allPoints.map(p => p[1]);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
 
-        // Clear canvas
-        ctx.fillStyle = '#1F2937';
-        ctx.fillRect(0, 0, width, height);
+    const padding = 60;
+    const scaleX = (width - padding * 2) / (maxX - minX);
+    const scaleY = (height - padding * 2) / (maxY - minY);
+    const scale = Math.min(scaleX, scaleY);
 
-        // Draw grid
-        ctx.strokeStyle = '#374151';
-        ctx.lineWidth = 0.5;
-        const gridSize = 1 * scale; // 1 meter grid
-        for (let x = 0; x < width; x += gridSize) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
-            ctx.stroke();
-        }
-        for (let y = 0; y < height; y += gridSize) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
-            ctx.stroke();
-        }
+    const offsetX = (width - (maxX - minX) * scale) / 2;
+    const offsetY = (height - (maxY - minY) * scale) / 2;
 
-        // Draw plot boundary
+    const transform = (p: [number, number]): [number, number] => [
+      (p[0] - minX) * scale + offsetX,
+      height - ((p[1] - minY) * scale + offsetY),
+    ];
+
+    // Draw outer boundary fill
+    ctx.beginPath();
+    const startPoint = transform(boundary[0]);
+    ctx.moveTo(startPoint[0], startPoint[1]);
+    for (let i = 1; i < boundary.length; i++) {
+      const point = transform(boundary[i]);
+      ctx.lineTo(point[0], point[1]);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(229, 231, 235, 0.5)';
+    ctx.fill();
+
+    // Draw holes (cut out from boundary) - fill with white/background color
+    if (holes && holes.length > 0) {
+      holes.forEach((hole) => {
+        if (hole.coordinates.length < 3) return;
+
         ctx.beginPath();
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 3;
-        const [startX, startY] = transform(boundary[0][0], boundary[0][1]);
-        ctx.moveTo(startX, startY);
-        boundary.slice(1).forEach(([x, y]) => {
-            const [tx, ty] = transform(x, y);
-            ctx.lineTo(tx, ty);
-        });
+        const holeStart = transform(hole.coordinates[0]);
+        ctx.moveTo(holeStart[0], holeStart[1]);
+        for (let i = 1; i < hole.coordinates.length; i++) {
+          const point = transform(hole.coordinates[i]);
+          ctx.lineTo(point[0], point[1]);
+        }
         ctx.closePath();
-        ctx.stroke();
 
-        // Draw buildable area
-        if (buildableArea && buildableArea.length > 0) {
-            ctx.beginPath();
-            ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
-            ctx.strokeStyle = '#3B82F6';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            const [bStartX, bStartY] = transform(buildableArea[0][0], buildableArea[0][1]);
-            ctx.moveTo(bStartX, bStartY);
-            buildableArea.slice(1).forEach(([x, y]) => {
-                const [tx, ty] = transform(x, y);
-                ctx.lineTo(tx, ty);
-            });
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
+        // Fill hole with background color to "cut out"
+        ctx.fillStyle = '#f8fafc';
+        ctx.fill();
 
-        // Draw rooms
-        rooms.forEach((room) => {
-            if (!room.polygon || room.polygon.length === 0) return;
-
-            ctx.beginPath();
-            const color = ROOM_COLORS[room.type] || ZONE_COLORS[room.zone] || '#6B7280';
-            ctx.fillStyle = color + '40'; // Add transparency
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-
-            const [rStartX, rStartY] = transform(room.polygon[0][0], room.polygon[0][1]);
-            ctx.moveTo(rStartX, rStartY);
-            room.polygon.slice(1).forEach(([x, y]) => {
-                const [tx, ty] = transform(x, y);
-                ctx.lineTo(tx, ty);
-            });
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-
-            // Draw room label
-            const centerX = room.polygon.reduce((sum, [x]) => sum + x, 0) / room.polygon.length;
-            const centerY = room.polygon.reduce((sum, [, y]) => sum + y, 0) / room.polygon.length;
-            const [labelX, labelY] = transform(centerX, centerY);
-
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = '11px Inter, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(room.type.replace('_', ' '), labelX, labelY);
-        });
-
-        // Draw staircase
-        if (staircase && staircase.polygon.length > 0) {
-            ctx.beginPath();
-            ctx.fillStyle = 'rgba(236, 72, 153, 0.3)';
-            ctx.strokeStyle = '#EC4899';
-            ctx.lineWidth = 2;
-
-            const [sStartX, sStartY] = transform(staircase.polygon[0][0], staircase.polygon[0][1]);
-            ctx.moveTo(sStartX, sStartY);
-            staircase.polygon.slice(1).forEach(([x, y]) => {
-                const [tx, ty] = transform(x, y);
-                ctx.lineTo(tx, ty);
-            });
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-
-            // Stair symbol
-            const cx = staircase.polygon.reduce((sum, [x]) => sum + x, 0) / staircase.polygon.length;
-            const cy = staircase.polygon.reduce((sum, [, y]) => sum + y, 0) / staircase.polygon.length;
-            const [scx, scy] = transform(cx, cy);
-            ctx.fillStyle = '#EC4899';
-            ctx.font = 'bold 12px Inter, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('↑ STAIR', scx, scy);
-        }
-
-        // Draw scale bar
-        ctx.fillStyle = '#9CA3AF';
-        ctx.font = '10px Inter, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText('1m', padding, height - 10);
-        ctx.strokeStyle = '#9CA3AF';
+        // Draw hole outline with dashed red line
+        ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(padding, height - 20);
-        ctx.lineTo(padding + scale, height - 20);
+        ctx.setLineDash([6, 4]);
         ctx.stroke();
+        ctx.setLineDash([]);
 
-    }, [boundary, buildableArea, rooms, staircase, width, height]);
+        // Label the hole
+        const centerX = hole.coordinates.reduce((sum, p) => sum + p[0], 0) / hole.coordinates.length;
+        const centerY = hole.coordinates.reduce((sum, p) => sum + p[1], 0) / hole.coordinates.length;
+        const [labelX, labelY] = transform([centerX, centerY]);
 
-    return (
-        <div className="relative rounded-xl overflow-hidden bg-gray-800 shadow-xl">
-            <canvas
-                ref={canvasRef}
-                width={width}
-                height={height}
-                className="block"
-            />
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Courtyard', labelX, labelY - 8);
 
-            {/* Legend */}
-            <div className="absolute bottom-4 right-4 bg-gray-900/80 backdrop-blur p-3 rounded-lg">
-                <div className="text-xs text-gray-400 mb-2 font-medium">Legend</div>
-                <div className="flex flex-col gap-1 text-xs">
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-white/80 border border-white"></div>
-                        <span className="text-gray-300">Plot Boundary</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 border-2 border-blue-500 border-dashed"></div>
-                        <span className="text-gray-300">Buildable Area</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-pink-500/50 border border-pink-500"></div>
-                        <span className="text-gray-300">Staircase</span>
-                    </div>
-                </div>
-            </div>
+        ctx.font = '10px Inter, sans-serif';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(`${hole.area_sqm.toFixed(1)} m²`, labelX, labelY + 8);
+      });
+    }
+
+    // Draw rooms
+    rooms.forEach((room) => {
+      if (!room.polygon || room.polygon.length < 3) return;
+
+      const colors = ZONE_COLORS[room.zone] || ZONE_COLORS.public;
+
+      ctx.beginPath();
+      const rStart = transform(room.polygon[0]);
+      ctx.moveTo(rStart[0], rStart[1]);
+      for (let i = 1; i < room.polygon.length; i++) {
+        const point = transform(room.polygon[i]);
+        ctx.lineTo(point[0], point[1]);
+      }
+      ctx.closePath();
+
+      // Fill with transparency
+      ctx.fillStyle = colors.fill + '40';
+      ctx.fill();
+      ctx.strokeStyle = colors.stroke;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Room label
+      const centerX = room.polygon.reduce((sum, p) => sum + p[0], 0) / room.polygon.length;
+      const centerY = room.polygon.reduce((sum, p) => sum + p[1], 0) / room.polygon.length;
+      const [labelX, labelY] = transform([centerX, centerY]);
+
+      ctx.fillStyle = '#1e293b';
+      ctx.font = 'bold 11px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(room.type.replace('_', ' '), labelX, labelY - 6);
+
+      ctx.font = '10px Inter, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(`${room.area_sqm.toFixed(1)} m²`, labelX, labelY + 8);
+    });
+
+    // Draw staircase
+    if (staircase && staircase.polygon && staircase.polygon.length >= 3) {
+      ctx.beginPath();
+      const sStart = transform(staircase.polygon[0]);
+      ctx.moveTo(sStart[0], sStart[1]);
+      for (let i = 1; i < staircase.polygon.length; i++) {
+        const point = transform(staircase.polygon[i]);
+        ctx.lineTo(point[0], point[1]);
+      }
+      ctx.closePath();
+
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.3)';
+      ctx.fill();
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Draw outer boundary outline
+    ctx.beginPath();
+    ctx.moveTo(startPoint[0], startPoint[1]);
+    for (let i = 1; i < boundary.length; i++) {
+      const point = transform(boundary[i]);
+      ctx.lineTo(point[0], point[1]);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+  }, [boundary, holes, rooms, staircase, width, height]);
+
+  const hasHoles = holes && holes.length > 0;
+
+  return (
+    <div className="viewer-container">
+      <div className="viewer-toolbar">
+        <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-secondary)' }}>
+          Floor Plan View
+          {hasHoles && (
+            <span style={{
+              marginLeft: '0.5rem',
+              padding: '0.125rem 0.5rem',
+              background: '#fef2f2',
+              color: '#dc2626',
+              borderRadius: '4px',
+              fontSize: '0.75rem'
+            }}>
+              {holes!.length} Courtyard{holes!.length > 1 ? 's' : ''}
+            </span>
+          )}
+        </span>
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          Scale: Auto-fit
+        </span>
+      </div>
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        className="viewer-canvas"
+      />
+      <div className="viewer-legend">
+        {Object.entries(ZONE_COLORS).map(([zone, colors]) => (
+          <div key={zone} className="legend-item">
+            <div className="legend-color" style={{ backgroundColor: colors.fill }}></div>
+            <span>{colors.label}</span>
+          </div>
+        ))}
+        <div className="legend-item">
+          <div className="legend-color" style={{ backgroundColor: '#334155' }}></div>
+          <span>Plot Boundary</span>
         </div>
-    );
+        {hasHoles && (
+          <div className="legend-item">
+            <div className="legend-color" style={{ backgroundColor: '#ef4444', border: '1px dashed #ef4444' }}></div>
+            <span>Courtyard</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }

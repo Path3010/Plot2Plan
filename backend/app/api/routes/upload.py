@@ -28,11 +28,20 @@ class BoundingBox(BaseModel):
     max_y: float
 
 
+class HoleInfo(BaseModel):
+    """Information about a hole/cutout in the boundary."""
+    id: int
+    coordinates: List[Tuple[float, float]]
+    area_sqm: float
+
+
 class UploadResponse(BaseModel):
     """Response after successful DXF upload."""
     project_id: str
     filename: str
     boundary: List[Tuple[float, float]]
+    holes: List[HoleInfo] = []
+    has_holes: bool = False
     area_sqm: float
     area_sqft: float
     bounding_box: BoundingBox
@@ -74,6 +83,8 @@ async def upload_dxf(file: UploadFile = File(...)):
     - Area calculations
     - Bounding box
     """
+    from app.core.dxf_parser import DXFParser, DXFParserError
+    
     # Validate file type
     if not file.filename.lower().endswith('.dxf'):
         raise HTTPException(
@@ -97,18 +108,44 @@ async def upload_dxf(file: UploadFile = File(...)):
     with open(file_path, "wb") as f:
         f.write(contents)
     
-    # TODO: Parse DXF using core.dxf_parser (Phase 1.2)
-    # For now, return placeholder data
-    
-    # Placeholder boundary (will be replaced with actual parsing)
-    boundary = [
-        (0.0, 0.0),
-        (15.0, 0.0),
-        (15.0, 20.0),
-        (0.0, 20.0),
-        (0.0, 0.0),  # Closed polygon
-    ]
-    area_sqm = 300.0  # 15m x 20m
+    # Parse DXF file using the parser
+    try:
+        parser = DXFParser(file_path)
+        polygon = parser.parse()
+        boundary_info = parser.get_boundary_info()
+        
+        # Extract boundary coordinates as list of tuples
+        boundary = [(round(x, 3), round(y, 3)) for x, y in boundary_info["coordinates"]]
+        area_sqm = boundary_info["area_sqm"]
+        bbox = boundary_info["bounding_box"]
+        
+        # Extract hole information
+        has_holes = boundary_info.get("has_holes", False)
+        holes_data = []
+        if has_holes:
+            for hole in boundary_info.get("holes", []):
+                holes_data.append(HoleInfo(
+                    id=hole["id"],
+                    coordinates=[(round(x, 3), round(y, 3)) for x, y in hole["coordinates"]],
+                    area_sqm=hole["area_sqm"]
+                ))
+        
+    except DXFParserError as e:
+        # Delete the uploaded file if parsing fails
+        if file_path.exists():
+            file_path.unlink()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to parse DXF file: {str(e)}"
+        )
+    except Exception as e:
+        # Delete the uploaded file if parsing fails
+        if file_path.exists():
+            file_path.unlink()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error parsing DXF file: {str(e)}"
+        )
     
     # Store project
     projects_store[project_id] = {
@@ -116,23 +153,28 @@ async def upload_dxf(file: UploadFile = File(...)):
         "filename": file.filename,
         "file_path": str(file_path),
         "boundary": boundary,
+        "holes": [h.model_dump() for h in holes_data],
+        "has_holes": has_holes,
         "area_sqm": area_sqm,
+        "bounding_box": bbox,
     }
     
     return UploadResponse(
         project_id=project_id,
         filename=file.filename,
         boundary=boundary,
+        holes=holes_data,
+        has_holes=has_holes,
         area_sqm=area_sqm,
         area_sqft=area_sqm * 10.764,  # Convert to sqft
         bounding_box=BoundingBox(
-            min_x=0.0,
-            min_y=0.0,
-            max_x=15.0,
-            max_y=20.0,
+            min_x=bbox["min_x"],
+            min_y=bbox["min_y"],
+            max_x=bbox["max_x"],
+            max_y=bbox["max_y"],
         ),
         is_valid=True,
-        message="DXF file uploaded and parsed successfully",
+        message=f"DXF file uploaded and parsed successfully{' (with ' + str(len(holes_data)) + ' hole(s))' if has_holes else ''}",
     )
 
 

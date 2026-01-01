@@ -1,6 +1,7 @@
 """
 DXF Parser Module
 Handles parsing of DXF files and extraction of plot boundaries.
+Supports nested boundaries (holes/cutouts) for complex plot shapes.
 """
 
 from typing import List, Tuple, Optional
@@ -23,9 +24,13 @@ class DXFParser:
     
     Extracts closed polygons from LWPOLYLINE and POLYLINE entities
     and converts them to shapely Polygon objects.
+    
+    Supports nested boundaries (holes) - the largest polygon becomes
+    the exterior boundary, and smaller polygons inside it become holes.
     """
     
     SUPPORTED_LAYERS = ["BOUNDARY", "PLOT", "SITE", "0"]
+    HOLE_LAYERS = ["HOLE", "CUTOUT", "INNER", "VOID"]
     
     def __init__(self, file_path: str | Path):
         """
@@ -37,14 +42,15 @@ class DXFParser:
         self.file_path = Path(file_path)
         self.doc = None
         self.boundary_polygon: Optional[Polygon] = None
-        self.raw_coordinates: List[Tuple[float, float]] = []
+        self.exterior_coords: List[Tuple[float, float]] = []
+        self.holes: List[List[Tuple[float, float]]] = []
         
     def parse(self) -> Polygon:
         """
-        Parse the DXF file and extract the plot boundary.
+        Parse the DXF file and extract the plot boundary with holes.
         
         Returns:
-            shapely Polygon representing the plot boundary
+            shapely Polygon representing the plot boundary (with holes if any)
             
         Raises:
             DXFParserError: If no valid boundary is found
@@ -59,18 +65,96 @@ class DXFParser:
         
         msp = self.doc.modelspace()
         
-        # Try to find boundary in preferred layers first
-        boundary = self._find_boundary_in_layers(msp, self.SUPPORTED_LAYERS)
+        # Collect all closed polylines
+        all_polygons = self._collect_all_polygons(msp)
         
-        if boundary is None:
-            # Fall back to finding the largest closed polyline
-            boundary = self._find_largest_closed_polyline(msp)
-        
-        if boundary is None:
+        if not all_polygons:
             raise DXFParserError("No valid boundary polygon found in DXF file")
+        
+        # Build polygon with holes
+        boundary = self._build_polygon_with_holes(all_polygons)
+        
+        if boundary is None:
+            raise DXFParserError("Failed to build valid boundary polygon")
         
         self.boundary_polygon = boundary
         return boundary
+    
+    def _collect_all_polygons(self, msp) -> List[Tuple[Polygon, str]]:
+        """
+        Collect all closed polylines and convert them to polygons.
+        Returns list of (polygon, layer_name) tuples.
+        """
+        polygons = []
+        
+        # Collect LWPOLYLINE entities
+        for entity in msp.query('LWPOLYLINE'):
+            if entity.closed:
+                polygon = self._lwpolyline_to_polygon(entity)
+                if polygon is not None and polygon.is_valid and polygon.area > 0.1:
+                    layer = entity.dxf.layer.upper() if entity.dxf.layer else "0"
+                    polygons.append((polygon, layer))
+        
+        # Collect POLYLINE entities (older DXF format)
+        for entity in msp.query('POLYLINE'):
+            if entity.is_closed:
+                polygon = self._polyline_to_polygon(entity)
+                if polygon is not None and polygon.is_valid and polygon.area > 0.1:
+                    layer = entity.dxf.layer.upper() if entity.dxf.layer else "0"
+                    polygons.append((polygon, layer))
+        
+        return polygons
+    
+    def _build_polygon_with_holes(self, polygons: List[Tuple[Polygon, str]]) -> Optional[Polygon]:
+        """
+        Build a polygon with holes from a list of polygons.
+        
+        Logic:
+        1. Find the largest polygon (exterior boundary)
+        2. Find all smaller polygons that are inside the exterior
+        3. These become holes
+        """
+        if not polygons:
+            return None
+        
+        # Sort by area (largest first)
+        polygons.sort(key=lambda x: x[0].area, reverse=True)
+        
+        # The largest polygon is the exterior
+        exterior_polygon, exterior_layer = polygons[0]
+        exterior_coords = list(exterior_polygon.exterior.coords)
+        self.exterior_coords = exterior_coords
+        
+        # Find holes - smaller polygons that are inside the exterior
+        holes = []
+        for polygon, layer in polygons[1:]:
+            # Check if this polygon is inside the exterior
+            if exterior_polygon.contains(polygon) or layer in self.HOLE_LAYERS:
+                # This is a hole
+                hole_coords = list(polygon.exterior.coords)
+                # Ensure hole has opposite orientation (clockwise for holes)
+                ring = LinearRing(hole_coords)
+                if ring.is_ccw:
+                    hole_coords = list(reversed(hole_coords))
+                holes.append(hole_coords)
+                self.holes.append(hole_coords)
+        
+        # Create polygon with holes
+        try:
+            if holes:
+                polygon = Polygon(exterior_coords, holes)
+            else:
+                polygon = Polygon(exterior_coords)
+            
+            if not polygon.is_valid:
+                polygon = make_valid(polygon)
+            
+            return polygon
+            
+        except Exception as e:
+            print(f"Warning: Failed to create polygon with holes: {e}")
+            # Fall back to exterior only
+            return Polygon(exterior_coords)
     
     def _find_boundary_in_layers(self, msp, layers: List[str]) -> Optional[Polygon]:
         """Find boundary polygon in specified layers."""
@@ -125,8 +209,6 @@ class DXFParser:
             if points[0] != points[-1]:
                 points.append(points[0])
             
-            self.raw_coordinates = points
-            
             # Create polygon and validate
             polygon = Polygon(points)
             
@@ -154,7 +236,6 @@ class DXFParser:
             if points[0] != points[-1]:
                 points.append(points[0])
             
-            self.raw_coordinates = points
             polygon = Polygon(points)
             
             if not polygon.is_valid:
@@ -171,17 +252,28 @@ class DXFParser:
         Get information about the parsed boundary.
         
         Returns:
-            Dictionary with boundary metadata
+            Dictionary with boundary metadata including hole information
         """
         if self.boundary_polygon is None:
             raise DXFParserError("No boundary parsed yet. Call parse() first.")
         
         bounds = self.boundary_polygon.bounds  # (minx, miny, maxx, maxy)
         
+        # Get hole information
+        holes_info = []
+        for i, interior in enumerate(self.boundary_polygon.interiors):
+            hole_polygon = Polygon(interior.coords)
+            holes_info.append({
+                "id": i,
+                "coordinates": list(interior.coords),
+                "area_sqm": hole_polygon.area,
+            })
+        
         return {
             "coordinates": list(self.boundary_polygon.exterior.coords),
-            "area_sqm": self.boundary_polygon.area,
+            "area_sqm": self.boundary_polygon.area,  # Area minus holes
             "area_sqft": self.boundary_polygon.area * 10.764,
+            "gross_area_sqm": Polygon(self.boundary_polygon.exterior.coords).area,  # Without subtracting holes
             "perimeter_m": self.boundary_polygon.length,
             "bounding_box": {
                 "min_x": bounds[0],
@@ -196,6 +288,9 @@ class DXFParser:
                 "y": self.boundary_polygon.centroid.y,
             },
             "is_convex": self.boundary_polygon.convex_hull.equals(self.boundary_polygon),
+            "has_holes": len(self.holes) > 0,
+            "num_holes": len(self.holes),
+            "holes": holes_info,
         }
 
 
