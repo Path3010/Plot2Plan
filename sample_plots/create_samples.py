@@ -5,9 +5,11 @@ Run: python create_samples.py
 Includes various shapes:
 - Rectangular, L-shaped, irregular, square, wide plots
 - Doughnut shape (with inner hole/courtyard)
+- Validation test files (self-intersecting, tiny, huge, etc.)
 """
 
 import ezdxf
+import math
 
 
 def create_sample_plot(filename: str, points: list, layer: str = "BOUNDARY"):
@@ -94,6 +96,83 @@ def create_plot_with_multiple_holes(
     print(f"Created: {filename} (with {len(holes)} hole(s))")
 
 
+def create_self_intersecting_plot(filename: str, points: list, layer: str = "BOUNDARY"):
+    """
+    Create a self-intersecting polygon (figure-8 / bowtie shape).
+    This is used to test validation - it should fail the simplicity check.
+    """
+    doc = ezdxf.new('R2010')
+    msp = doc.modelspace()
+    
+    doc.layers.add(layer, color=7)
+    
+    # Add closed polyline - the crossing happens automatically
+    msp.add_lwpolyline(points, close=True, dxfattribs={'layer': layer})
+    
+    doc.saveas(filename)
+    print(f"Created: {filename} (self-intersecting - should fail validation)")
+
+
+def create_unclosed_plot(filename: str, points: list, layer: str = "BOUNDARY"):
+    """
+    Create a plot with an UNCLOSED polyline (not marked as closed).
+    This is used to test the parser's ability to handle and auto-close unclosed boundaries.
+    """
+    doc = ezdxf.new('R2010')
+    msp = doc.modelspace()
+    
+    doc.layers.add(layer, color=7)
+    
+    # Add polyline WITHOUT close=True (unclosed)
+    msp.add_lwpolyline(points, close=False, dxfattribs={'layer': layer})
+    
+    doc.saveas(filename)
+    print(f"Created: {filename} (UNCLOSED polyline - should trigger warning)")
+
+
+def create_star_polygon(
+    filename: str,
+    outer_radius: float = 15,
+    inner_radius: float = 7,
+    num_points: int = 5,
+    layer: str = "BOUNDARY"
+):
+    """
+    Create a star-shaped polygon.
+    
+    Args:
+        filename: Output DXF filename
+        outer_radius: Radius of outer points
+        inner_radius: Radius of inner points
+        num_points: Number of star points
+        layer: Layer name
+    """
+    doc = ezdxf.new('R2010')
+    msp = doc.modelspace()
+    
+    doc.layers.add(layer, color=7)
+    
+    # Generate star points alternating between outer and inner radius
+    points = []
+    angle_step = 360 / (num_points * 2)
+    
+    for i in range(num_points * 2):
+        angle = math.radians(i * angle_step - 90)  # Start from top
+        radius = outer_radius if i % 2 == 0 else inner_radius
+        x = radius * math.cos(angle) + outer_radius  # Offset to positive coords
+        y = radius * math.sin(angle) + outer_radius
+        points.append((x, y))
+    
+    msp.add_lwpolyline(points, close=True, dxfattribs={'layer': layer})
+    
+    doc.saveas(filename)
+    print(f"Created: {filename} (star shape with {num_points} points)")
+
+
+# ============================================================================
+# Main Script
+# ============================================================================
+
 if __name__ == "__main__":
     # ========================================
     # Basic Shapes (no holes)
@@ -148,7 +227,6 @@ if __name__ == "__main__":
     )
     
     # U-shaped plot (simulated with large rectangular hole on one side)
-    # Creates a U-shape by having a rectangular hole at the top
     create_doughnut_plot(
         "u_shaped.dxf",
         outer_points=[(0, 0), (20, 0), (20, 18), (0, 18)],
@@ -166,7 +244,6 @@ if __name__ == "__main__":
     )
     
     # Complex shape: Hexagonal outer with square hole
-    import math
     hex_radius = 12
     hex_points = [
         (hex_radius * math.cos(math.radians(angle)), hex_radius * math.sin(math.radians(angle)))
@@ -181,6 +258,93 @@ if __name__ == "__main__":
         inner_points=[(12, 12), (18, 12), (18, 18), (12, 18)]  # 6x6m square courtyard
     )
     
+    # ========================================
+    # Validation Test Cases
+    # ========================================
+    print("\n--- Creating Validation Test Files ---")
+    
+    # Test 1: Self-intersecting polygon (figure-8 / bowtie shape)
+    # This should FAIL validation (is_simple = false)
+    create_self_intersecting_plot(
+        "validation_test_self_intersecting.dxf",
+        # Bowtie shape - lines cross in the middle
+        points=[(0, 0), (10, 10), (0, 10), (10, 0)]
+    )
+    
+    # Test 2: Clockwise oriented polygon
+    # This should trigger WARNING (orientation = cw, should be ccw)
+    create_sample_plot(
+        "validation_test_clockwise.dxf",
+        # Clockwise rectangle (reverse order)
+        points=[(0, 0), (0, 15), (20, 15), (20, 0)]
+    )
+    
+    # Test 3: Extreme aspect ratio (very narrow)
+    # This should trigger WARNING (extreme aspect ratio)
+    create_sample_plot(
+        "validation_test_narrow.dxf",
+        # Very narrow: 50m x 2m = aspect ratio of 25
+        points=[(0, 0), (50, 0), (50, 2), (0, 2)]
+    )
+    
+    # Test 4: Very small area
+    # This should trigger WARNING (area too small)
+    create_sample_plot(
+        "validation_test_tiny.dxf",
+        # Tiny: 0.5m x 0.5m = 0.25 sqm (below 1.0 threshold)
+        points=[(0, 0), (0.5, 0), (0.5, 0.5), (0, 0.5)]
+    )
+    
+    # Test 5: Concave polygon (L-shape is concave)
+    # This should show is_convex = false (INFO, not error)
+    create_sample_plot(
+        "validation_test_concave.dxf",
+        # Concave L-shape
+        points=[(0, 0), (15, 0), (15, 10), (5, 10), (5, 20), (0, 20)]
+    )
+    
+    # Test 6: Very large area
+    # This should trigger WARNING (area too large)
+    create_sample_plot(
+        "validation_test_huge.dxf",
+        # Huge: 500m x 500m = 250,000 sqm (above 100,000 threshold)
+        points=[(0, 0), (500, 0), (500, 500), (0, 500)]
+    )
+    
+    # Test 7: Triangle (minimum vertices)
+    # This should pass (3 vertices is minimum)
+    create_sample_plot(
+        "validation_test_triangle.dxf",
+        points=[(0, 0), (20, 0), (10, 15)]
+    )
+    
+    # Test 8: Complex polygon with many vertices
+    # Creates a star shape
+    create_star_polygon(
+        "validation_test_star.dxf",
+        outer_radius=15,
+        inner_radius=7,
+        num_points=6
+    )
+    
+    # Test 9: Unclosed boundary
+    # This should trigger WARNING (unclosed polyline - will be auto-closed)
+    create_unclosed_plot(
+        "validation_test_unclosed.dxf",
+        # Rectangle but NOT closed in DXF
+        points=[(0, 0), (20, 0), (20, 15), (0, 15)]
+    )
+    
+    # Test 10: Unclosed L-shape
+    # More complex unclosed shape
+    create_unclosed_plot(
+        "validation_test_unclosed_lshape.dxf",
+        points=[(0, 0), (18, 0), (18, 10), (8, 10), (8, 18), (0, 18)]
+    )
+    
+    # ========================================
+    # Summary
+    # ========================================
     print("\n" + "=" * 50)
     print("All sample DXF files created successfully!")
     print("=" * 50)
@@ -196,3 +360,15 @@ if __name__ == "__main__":
     print("  - u_shaped.dxf (U-shape via hole)")
     print("  - twin_courtyards.dxf (2 internal courtyards)")
     print("  - hexagon_with_courtyard.dxf (hexagonal with square hole)")
+    print("\nValidation test files:")
+    print("  - validation_test_self_intersecting.dxf (should FAIL - self-intersection)")
+    print("  - validation_test_clockwise.dxf (should WARN - wrong orientation)")
+    print("  - validation_test_narrow.dxf (should WARN - extreme aspect ratio)")
+    print("  - validation_test_tiny.dxf (should WARN - area too small)")
+    print("  - validation_test_concave.dxf (should show is_convex=false)")
+    print("  - validation_test_huge.dxf (should WARN - area too large)")
+    print("  - validation_test_triangle.dxf (minimum 3 vertices)")
+    print("  - validation_test_star.dxf (complex shape with many vertices)")
+    print("  - validation_test_unclosed.dxf (should WARN - unclosed boundary)")
+    print("  - validation_test_unclosed_lshape.dxf (should WARN - unclosed L-shape)")
+

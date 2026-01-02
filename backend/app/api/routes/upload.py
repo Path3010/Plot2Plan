@@ -35,16 +35,33 @@ class HoleInfo(BaseModel):
     area_sqm: float
 
 
+class ValidationInfo(BaseModel):
+    """Validation results for the boundary."""
+    is_valid: bool
+    is_closed: bool
+    is_simple: bool
+    orientation: str
+    is_convex: bool
+    aspect_ratio: float
+    compactness: float
+    num_vertices: int
+    was_corrected: bool = False
+    issues: List[dict] = []
+
+
 class UploadResponse(BaseModel):
     """Response after successful DXF upload."""
     project_id: str
     filename: str
     boundary: List[Tuple[float, float]]
+    boundary_unclosed: List[Tuple[float, float]] = []  # Original unclosed boundary for display
+    is_originally_closed: bool = True  # Was boundary closed in DXF?
     holes: List[HoleInfo] = []
     has_holes: bool = False
     area_sqm: float
     area_sqft: float
     bounding_box: BoundingBox
+    validation: ValidationInfo
     is_valid: bool
     message: str
 
@@ -114,8 +131,13 @@ async def upload_dxf(file: UploadFile = File(...)):
         polygon = parser.parse()
         boundary_info = parser.get_boundary_info()
         
+        # Perform validation
+        validation_result = parser.validate_boundary()
+        
         # Extract boundary coordinates as list of tuples
         boundary = [(round(x, 3), round(y, 3)) for x, y in boundary_info["coordinates"]]
+        boundary_unclosed = [(round(x, 3), round(y, 3)) for x, y in boundary_info.get("coordinates_unclosed", boundary_info["coordinates"])]
+        is_originally_closed = boundary_info.get("is_originally_closed", True)
         area_sqm = boundary_info["area_sqm"]
         bbox = boundary_info["bounding_box"]
         
@@ -129,6 +151,28 @@ async def upload_dxf(file: UploadFile = File(...)):
                     coordinates=[(round(x, 3), round(y, 3)) for x, y in hole["coordinates"]],
                     area_sqm=hole["area_sqm"]
                 ))
+        
+        # Combine parsing issues with validation issues, removing duplicates
+        # Filter out UNCLOSED_POLYLINE from parsing_issues since validation now handles it
+        parsing_issues = [
+            issue for issue in boundary_info.get("parsing_issues", [])
+            if issue.get("code") != "UNCLOSED_POLYLINE"
+        ]
+        all_issues = parsing_issues + validation_result.get("issues", [])
+        
+        # Build validation info
+        validation_info = ValidationInfo(
+            is_valid=validation_result["is_valid"],
+            is_closed=validation_result["is_closed"],
+            is_simple=validation_result["is_simple"],
+            orientation=validation_result["orientation"],
+            is_convex=validation_result["is_convex"],
+            aspect_ratio=validation_result["aspect_ratio"],
+            compactness=validation_result["compactness"],
+            num_vertices=validation_result["num_vertices"],
+            was_corrected=validation_result["was_corrected"],
+            issues=all_issues,
+        )
         
     except DXFParserError as e:
         # Delete the uploaded file if parsing fails
@@ -153,16 +197,21 @@ async def upload_dxf(file: UploadFile = File(...)):
         "filename": file.filename,
         "file_path": str(file_path),
         "boundary": boundary,
+        "boundary_unclosed": boundary_unclosed,
+        "is_originally_closed": is_originally_closed,
         "holes": [h.model_dump() for h in holes_data],
         "has_holes": has_holes,
         "area_sqm": area_sqm,
         "bounding_box": bbox,
+        "validation": validation_info.model_dump(),
     }
     
     return UploadResponse(
         project_id=project_id,
         filename=file.filename,
         boundary=boundary,
+        boundary_unclosed=boundary_unclosed,
+        is_originally_closed=is_originally_closed,
         holes=holes_data,
         has_holes=has_holes,
         area_sqm=area_sqm,
@@ -173,8 +222,9 @@ async def upload_dxf(file: UploadFile = File(...)):
             max_x=bbox["max_x"],
             max_y=bbox["max_y"],
         ),
-        is_valid=True,
-        message=f"DXF file uploaded and parsed successfully{' (with ' + str(len(holes_data)) + ' hole(s))' if has_holes else ''}",
+        validation=validation_info,
+        is_valid=validation_info.is_valid,
+        message=f"DXF file uploaded and validated successfully{' (with ' + str(len(holes_data)) + ' hole(s))' if has_holes else ''}{' [auto-corrected]' if validation_info.was_corrected else ''}",
     )
 
 

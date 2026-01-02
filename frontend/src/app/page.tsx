@@ -6,6 +6,7 @@ import FloorPlanViewer from '@/components/FloorPlanViewer';
 import ConfigurationPanel from '@/components/ConfigurationPanel';
 import ScoreDisplay from '@/components/ScoreDisplay';
 import FloorSelector from '@/components/FloorSelector';
+import ValidationDisplay from '@/components/ValidationDisplay';
 
 interface HoleData {
   id: number;
@@ -13,14 +14,30 @@ interface HoleData {
   area_sqm: number;
 }
 
+interface ValidationData {
+  is_valid: boolean;
+  is_closed: boolean;
+  is_simple: boolean;
+  orientation: string;
+  is_convex: boolean;
+  aspect_ratio: number;
+  compactness: number;
+  num_vertices: number;
+  was_corrected: boolean;
+  issues: { code: string; message: string; severity: string }[];
+}
+
 interface ProjectData {
   project_id: string;
   filename: string;
   boundary: [number, number][];
+  boundary_unclosed?: [number, number][];  // Original unclosed boundary for display
+  is_originally_closed?: boolean;  // Was boundary closed in DXF?
   holes?: HoleData[];
   has_holes?: boolean;
   area_sqm: number;
   area_sqft: number;
+  validation?: ValidationData;
 }
 
 interface FloorData {
@@ -59,6 +76,17 @@ export default function Home() {
 
   const handleGenerateFloor = async () => {
     if (!project) return;
+
+    // Check if boundary has validation errors before generating
+    if (project.validation && !project.validation.is_valid) {
+      const errorMessages = project.validation.issues
+        .filter(i => i.severity === 'error')
+        .map(i => i.message)
+        .join(', ');
+
+      setError(`Cannot generate floor plan: ${errorMessages || 'Boundary has validation errors. Please upload a valid DXF file.'}`);
+      return;
+    }
 
     setIsGenerating(true);
     setError(null);
@@ -189,6 +217,10 @@ export default function Home() {
             <div className="panel-left">
               <ConfigurationPanel onConfigChange={handleConfigChange} projectId={project.project_id} />
 
+              {project.validation && (
+                <ValidationDisplay validation={project.validation} />
+              )}
+
               {currentFloor && (
                 <ScoreDisplay score={currentFloor.score} />
               )}
@@ -205,8 +237,17 @@ export default function Home() {
 
                 <button
                   onClick={handleGenerateFloor}
-                  disabled={isGenerating}
+                  disabled={isGenerating || (project?.validation && !project.validation.is_valid)}
                   className="btn btn-primary"
+                  style={{
+                    opacity: (project?.validation && !project.validation.is_valid) ? 0.6 : 1,
+                    cursor: (project?.validation && !project.validation.is_valid) ? 'not-allowed' : 'pointer',
+                  }}
+                  title={
+                    (project?.validation && !project.validation.is_valid) 
+                      ? 'Fix boundary validation errors before generating' 
+                      : undefined
+                  }
                 >
                   {isGenerating ? (
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -220,6 +261,10 @@ export default function Home() {
                       }}></div>
                       Generating...
                     </span>
+                  ) : (project?.validation && !project.validation.is_valid) ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      ⚠️ Fix Errors First
+                    </span>
                   ) : (
                     `Generate ${activeFloor === 0 ? 'Ground Floor' : `Floor ${activeFloor}`}`
                   )}
@@ -228,6 +273,8 @@ export default function Home() {
 
               <FloorPlanViewer
                 boundary={project.boundary}
+                boundaryUnclosed={project.boundary_unclosed}
+                isOriginallyClosed={project.is_originally_closed}
                 holes={project.holes}
                 rooms={currentFloor?.rooms || []}
                 staircase={currentFloor?.staircase}

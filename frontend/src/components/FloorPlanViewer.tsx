@@ -18,6 +18,8 @@ interface Room {
 
 interface FloorPlanViewerProps {
   boundary: [number, number][];
+  boundaryUnclosed?: [number, number][];  // Original unclosed boundary for accurate display
+  isOriginallyClosed?: boolean;  // Was boundary closed in DXF?
   holes?: Hole[];
   rooms: Room[];
   staircase?: { polygon: [number, number][] };
@@ -31,7 +33,7 @@ const ZONE_COLORS = {
   service: { fill: '#f59e0b', stroke: '#d97706', label: 'Service' },
 };
 
-export default function FloorPlanViewer({ boundary, holes, rooms, staircase, width, height }: FloorPlanViewerProps) {
+export default function FloorPlanViewer({ boundary, boundaryUnclosed, isOriginallyClosed = true, holes, rooms, staircase, width, height }: FloorPlanViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -205,18 +207,54 @@ export default function FloorPlanViewer({ boundary, holes, rooms, staircase, wid
     }
 
     // Draw outer boundary outline
+    // Use unclosed coordinates for display if boundary was not originally closed
+    const displayBoundary = (!isOriginallyClosed && boundaryUnclosed && boundaryUnclosed.length > 0) 
+      ? boundaryUnclosed 
+      : boundary;
+    
     ctx.beginPath();
-    ctx.moveTo(startPoint[0], startPoint[1]);
-    for (let i = 1; i < boundary.length; i++) {
-      const point = transform(boundary[i]);
+    const outlineStart = transform(displayBoundary[0]);
+    ctx.moveTo(outlineStart[0], outlineStart[1]);
+    for (let i = 1; i < displayBoundary.length; i++) {
+      const point = transform(displayBoundary[i]);
       ctx.lineTo(point[0], point[1]);
     }
-    ctx.closePath();
-    ctx.strokeStyle = '#334155';
+    
+    // Only close path if boundary was originally closed in DXF
+    if (isOriginallyClosed) {
+      ctx.closePath();
+    }
+    
+    ctx.strokeStyle = isOriginallyClosed ? '#334155' : '#ef4444';  // Red for unclosed
     ctx.lineWidth = 3;
     ctx.stroke();
+    
+    // If unclosed, draw warning indicators at the gap
+    if (!isOriginallyClosed && displayBoundary.length > 0) {
+      const firstPoint = transform(displayBoundary[0]);
+      const lastPoint = transform(displayBoundary[displayBoundary.length - 1]);
+      
+      // Draw circles at gap endpoints
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(firstPoint[0], firstPoint[1], 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(lastPoint[0], lastPoint[1], 6, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw dashed line showing the gap
+      ctx.beginPath();
+      ctx.moveTo(firstPoint[0], firstPoint[1]);
+      ctx.lineTo(lastPoint[0], lastPoint[1]);
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
-  }, [boundary, holes, rooms, staircase, width, height]);
+  }, [boundary, boundaryUnclosed, isOriginallyClosed, holes, rooms, staircase, width, height]);
 
   const hasHoles = holes && holes.length > 0;
 
