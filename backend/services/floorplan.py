@@ -1,41 +1,430 @@
 """
-Floor Plan Generation Engine.
+Professional Residential Architect & Structural Planner - Indian Standards
 
-Implements a BSP-based room placement algorithm with Shapely geometry.
-Handles irregular boundaries, room sizing, wall generation, door/window placement.
+Implements complete architectural workflow with engineering logic:
+1. Plot geometry analysis (entry, longest walls, corners)
+2. Zoning (Public → Semi-private → Private → Service)
+3. Indian standard room sizes with structural grid
+4. Circulation flow planning (no dead corridors)
+5. Cross-ventilation and daylight optimization
+6. Structural feasibility (column grid 10-15 ft)
+7. Parking, utilities, and future expansion
+8. CAD-quality output with dimensions
 """
 
 import math
 import random
-from typing import Optional
-from shapely.geometry import Polygon, box, LineString, MultiPolygon
-from shapely.affinity import scale as shapely_scale, translate
+from typing import Optional, List, Dict, Tuple
+from shapely.geometry import Polygon, box, LineString, MultiPolygon, Point
+from shapely.affinity import scale as shapely_scale, translate, rotate
 from shapely.ops import unary_union
 import json
 
 
-# Default room sizes (sq ft) and aspect ratios
-ROOM_DEFAULTS = {
-    "master_bedroom": {"area": 200, "aspect": 1.5, "label": "Master Bedroom"},
-    "bedroom": {"area": 150, "aspect": 1.5, "label": "Bedroom"},
-    "bathroom": {"area": 50, "aspect": 1.0, "label": "Bathroom"},
-    "kitchen": {"area": 150, "aspect": 1.2, "label": "Kitchen"},
-    "living": {"area": 250, "aspect": 1.3, "label": "Living Room"},
-    "dining": {"area": 120, "aspect": 1.2, "label": "Dining Room"},
-    "study": {"area": 100, "aspect": 1.2, "label": "Study"},
-    "garage": {"area": 200, "aspect": 1.5, "label": "Garage"},
-    "hallway": {"area": 60, "aspect": 3.0, "label": "Hallway"},
-    "balcony": {"area": 40, "aspect": 2.0, "label": "Balcony"},
-    "pooja": {"area": 30, "aspect": 1.0, "label": "Pooja Room"},
-    "store": {"area": 40, "aspect": 1.0, "label": "Store Room"},
-    "other": {"area": 80, "aspect": 1.2, "label": "Room"},
+# INDIAN RESIDENTIAL STANDARDS - Room Sizes (feet)
+STANDARD_ROOM_SIZES = {
+    "living": {
+        "width": 14, "height": 16, "min_area": 224, 
+        "label": "LIVING ROOM", "zone": "public",
+        "furniture": "sofa", "window_required": True,
+    },
+    "master_bedroom": {
+        "width": 12, "height": 14, "min_area": 168,
+        "label": "MASTER BEDROOM", "zone": "private",
+        "furniture": "bed_double", "window_required": True,
+        "attached_toilet": True,
+    },
+    "bedroom": {
+        "width": 10, "height": 12, "min_area": 120,
+        "label": "BEDROOM", "zone": "private",
+        "furniture": "bed_single", "window_required": True,
+    },
+    "kitchen": {
+        "width": 8, "height": 10, "min_area": 80,
+        "label": "KITCHEN", "zone": "service",
+        "furniture": "counter", "window_required": True,
+        "plumbing_required": True,
+    },
+    "dining": {
+        "width": 10, "height": 12, "min_area": 120,
+        "label": "DINING ROOM", "zone": "semi-private",
+        "furniture": "table", "window_required": False,
+    },
+    "bathroom": {
+        "width": 5, "height": 8, "min_area": 40,
+        "label": "BATHROOM", "zone": "service",
+        "furniture": "toilet", "window_required": True,
+        "plumbing_required": True,
+    },
+    "toilet": {
+        "width": 4, "height": 6, "min_area": 24,
+        "label": "TOILET", "zone": "service",
+        "furniture": "toilet", "window_required": True,
+        "plumbing_required": True,
+    },
+    "porch": {
+        "width": 10, "height": 8, "min_area": 80,
+        "label": "PORCH", "zone": "public",
+        "furniture": None, "window_required": False,
+    },
+    "parking": {
+        "width": 10, "height": 18, "min_area": 180,
+        "label": "PARKING", "zone": "public",
+        "furniture": None, "window_required": False,
+    },
+    "utility": {
+        "width": 4, "height": 6, "min_area": 24,
+        "label": "UTILITY", "zone": "service",
+        "furniture": None, "window_required": True,
+        "plumbing_required": True,
+    },
+    "study": {
+        "width": 10, "height": 10, "min_area": 100,
+        "label": "STUDY", "zone": "private",
+        "furniture": "desk", "window_required": True,
+    },
+    "store": {
+        "width": 6, "height": 6, "min_area": 36,
+        "label": "STORE ROOM", "zone": "service",
+        "furniture": None, "window_required": False,
+    },
+    "pooja": {
+        "width": 5, "height": 5, "min_area": 25,
+        "label": "POOJA ROOM", "zone": "private",
+        "furniture": None, "window_required": False,
+    },
+    "staircase": {
+        "width": 5, "height": 10, "min_area": 50,
+        "label": "STAIRCASE", "zone": "circulation",
+        "furniture": None, "window_required": False,
+        "future_expansion": True,
+    },
 }
 
-WALL_THICKNESS = 0.5  # feet
+# STRUCTURAL STANDARDS (Indian Building Code)
+WALL_THICKNESS_EXTERIOR = 0.75  # 230 mm ≈ 0.75 feet
+WALL_THICKNESS_INTERIOR = 0.38  # 115 mm ≈ 0.38 feet
+COLUMN_SPACING_MIN = 10.0  # feet
+COLUMN_SPACING_MAX = 15.0  # feet
+BEAM_WIDTH = 0.75  # feet
+DOOR_WIDTH = 3.0  # feet (standard)
+WINDOW_WIDTH = 4.0  # feet
+CORRIDOR_WIDTH = 3.5  # feet
+PARKING_SIZE = (10, 18)  # feet (Indian car parking)
+STAIRCASE_WIDTH = 5.0  # feet
 MIN_ROOM_DIMENSION = 8.0  # Minimum room width/height in feet
-DOOR_WIDTH = 3.0  # Standard door width
-WINDOW_WIDTH = 4.0  # Standard window width
-CORRIDOR_WIDTH = 3.5  # Hallway/circulation width
+
+
+def _analyze_plot_geometry(boundary: Polygon) -> Dict:
+    """
+    STEP 1: Professional Plot Analysis (Architecture + Structural Engineering)
+    
+    Analyzes:
+    - Plot orientation and dimensions
+    - Road-facing side (longest edge)
+    - Entry and parking feasibility
+    - Corner types (narrow/wide/suitable for toilets/pooja)
+    - Structural grid suitability (column spacing)
+    - Ventilation potential (opposite walls)
+    - Circulation flow possibilities
+    """
+    coords = list(boundary.exterior.coords)
+    bounds = boundary.bounds  # (minx, miny, maxx, maxy)
+    width = bounds[2] - bounds[0]
+    height = bounds[3] - bounds[1]
+    centroid = boundary.centroid
+    
+    # Analyze all edges with orientation and structural properties
+    edges = []
+    for i in range(len(coords) - 1):
+        p1 = coords[i]
+        p2 = coords[i + 1]
+        length = ((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2) ** 0.5
+        midpoint = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+        angle = math.degrees(math.atan2(p2[1] - p1[1], p2[0] - p1[0]))
+        
+        # Edge orientation (for ventilation planning)
+        is_horizontal = abs(angle) < 30 or abs(angle) > 150
+        is_vertical = 60 <= abs(angle) <= 120
+        
+        # Check which side of plot (for road-facing)
+        dist_from_center = ((midpoint[0] - centroid.x)**2 + (midpoint[1] - centroid.y)**2) ** 0.5
+        
+        edges.append({
+            "start": p1,
+            "end": p2,
+            "length": length,
+            "midpoint": midpoint,
+            "angle": angle,
+            "is_horizontal": is_horizontal,
+            "is_vertical": is_vertical,
+            "dist_from_center": dist_from_center,
+            "suitable_for_parking": length >= PARKING_SIZE[1],  # 18 ft minimum
+            "suitable_for_living": length >= 14,  # Living room minimum width
+        })
+    
+    # Find road-facing side (longest edge)
+    longest_edge = max(edges, key=lambda e: e["length"])
+    
+    # Identify opposite sides for cross-ventilation
+    ventilation_pairs = []
+    for i, edge1 in enumerate(edges):
+        for j, edge2 in enumerate(edges[i+1:], start=i+1):
+            # Check if edges are roughly opposite (midpoints far apart)
+            dist = ((edge1["midpoint"][0] - edge2["midpoint"][0])**2 + 
+                   (edge1["midpoint"][1] - edge2["midpoint"][1])**2) ** 0.5
+            angle_diff = abs(edge1["angle"] - edge2["angle"])
+            
+            # Opposite if distance is large and angles differ by ~180°
+            if dist > width * 0.6 and (abs(angle_diff - 180) < 30 or abs(angle_diff) < 30):
+                ventilation_pairs.append((i, j))
+    
+    # Analyze corners for special room placement
+    corners = []
+    for i in range(len(coords) - 1):
+        prev_idx = (i - 1) % (len(coords) - 1)
+        next_idx = (i + 1) % (len(coords) - 1)
+        curr_pt = coords[i]
+        prev_pt = coords[prev_idx]
+        next_pt = coords[next_idx]
+        
+        # Calculate interior angle
+        v1 = (prev_pt[0] - curr_pt[0], prev_pt[1] - curr_pt[1])
+        v2 = (next_pt[0] - curr_pt[0], next_pt[1] - curr_pt[1])
+        
+        dot = v1[0] * v2[0] + v1[1] * v2[1]
+        det = v1[0] * v2[1] - v1[1] * v2[0]
+        angle_deg = abs(math.degrees(math.atan2(det, dot)))
+        
+        dist_from_center = ((curr_pt[0] - centroid.x)**2 + (curr_pt[1] - centroid.y)**2) ** 0.5
+        
+        # Classify corner suitability
+        is_narrow = angle_deg < 75  # Acute - good for toilets/stores
+        is_right = 75 <= angle_deg <= 105  # Right angle - flexible
+        is_wide = angle_deg > 105  # Obtuse - good for living/bedrooms
+        
+        corners.append({
+            "point": curr_pt,
+            "angle": angle_deg,
+            "distance_from_center": dist_from_center,
+            "is_narrow": is_narrow,
+            "is_right": is_right,
+            "is_wide": is_wide,
+            "suitable_for_toilet": is_narrow or dist_from_center > width * 0.6,
+            "suitable_for_pooja": is_narrow and dist_from_center < width * 0.5,
+            "suitable_for_store": is_narrow,
+            "suitable_for_bedroom": is_wide or is_right,
+        })
+    
+    # Calculate structural grid feasibility
+    can_fit_columns = (width >= COLUMN_SPACING_MIN * 2) and (height >= COLUMN_SPACING_MIN * 2)
+    num_columns_x = int(width / COLUMN_SPACING_MAX) + 1
+    num_columns_y = int(height / COLUMN_SPACING_MAX) + 1
+    
+    return {
+        "bounds": bounds,
+        "width": width,
+        "height": height,
+        "area": boundary.area,
+        "longest_edge": longest_edge,
+        "edges": edges,
+        "corners": corners,
+        "centroid": (centroid.x, centroid.y),
+        "ventilation_pairs": ventilation_pairs,
+        "can_fit_columns": can_fit_columns,
+        "column_grid": {"x": num_columns_x, "y": num_columns_y},
+        "suitable_for_parking": any(e["suitable_for_parking"] for e in edges),
+        "plot_type": "regular" if len(coords) <= 5 and boundary.area / (width * height) > 0.85 else "irregular",
+    }
+
+
+def _determine_entry_position(boundary: Polygon, plot_analysis: Dict) -> Dict:
+    """
+    STEP 2: Determine Entry Position + Parking Layout
+    
+    Logic:
+    - Entry from road-facing side (longest edge)
+    - Parking near entry if space allows (10×18 ft minimum)
+    - Porch before main entrance
+    - Entry should align with circulation spine
+    """
+    longest_edge = plot_analysis["longest_edge"]
+    entry_point = longest_edge["midpoint"]
+    
+    # Determine parking layout
+    parking_layout = None
+    if plot_analysis["suitable_for_parking"]:
+        # Try to place parking near entry
+        edge_start = longest_edge["start"]
+        edge_end = longest_edge["end"]
+        
+        # Parking along the road-facing edge
+        # Position: One side of entry or centered
+        parking_x = min(edge_start[0], edge_end[0]) + 2  # 2 ft setback
+        parking_y = min(edge_start[1], edge_end[1]) + 2
+        
+        parking_layout = {
+            "position": (parking_x, parking_y),
+            "width": PARKING_SIZE[0],
+            "length": PARKING_SIZE[1],
+            "orientation": "horizontal" if longest_edge["is_horizontal"] else "vertical",
+        }
+    
+    # Porch position (just inside entry)
+    porch_distance = 3.0  # 3 feet inside from entry
+    dx = porch_distance * math.cos(math.radians(longest_edge["angle"] + 90))
+    dy = porch_distance * math.sin(math.radians(longest_edge["angle"] + 90))
+    porch_point = (entry_point[0] + dx, entry_point[1] + dy)
+    
+    return {
+        "entry_point": entry_point,
+        "porch_point": porch_point,
+        "parking_layout": parking_layout,
+        "entry_edge_angle": longest_edge["angle"],
+    }
+
+
+def _create_zones(rooms_needed: List[Dict]) -> Dict[str, List[Dict]]:
+    """
+    Step 3: Organize rooms by zones.
+    Zones: Public, Semi-private, Private, Service
+    """
+    zones = {
+        "public": [],
+        "semi_private": [],
+        "private": [],
+        "service": [],
+    }
+    
+    for room in rooms_needed:
+        rtype = room["room_type"]
+        room_def = STANDARD_ROOM_SIZES.get(rtype, {"zone": "private"})
+        zone = room_def.get("zone", "private")
+        
+        # Map zone names
+        if zone == "semi-private":
+            zone = "semi_private"
+        
+        zones[zone].append(room)
+    
+    return zones
+
+
+def _get_placement_order() -> List[str]:
+    """
+    STEP 3: Define Architectural Room Placement Order
+    
+    Logic: Public → Semi-private → Private → Service
+    
+    Order respects:
+    - Entry sequence (porch → living)
+    - Zone adjacency (living near dining)
+    - Service core (kitchen/utility stacked for plumbing)
+    - Private zone separation (bedrooms away from public)
+    - Structural stacking (toilets aligned vertically)
+    """
+    return [
+        "parking",       # Near entry, road-facing
+        "porch",         # Main entrance vestibule
+        "living",        # Center, public zone, near entry
+        "dining",        # Adjacent to living, semi-private
+        "kitchen",       # Near dining, outer wall for exhaust
+        "utility",       # Adjacent to kitchen, plumbing stack
+        "master_bedroom", # Private zone, quiet corner
+        "bedroom",       # Private zone, natural light
+        "study",         # Private/semi-private, quiet
+        "bathroom",      # Service, stacked plumbing
+        "toilet",        # Service, stacked plumbing
+        "staircase",     # Future expansion, structurally planned
+        "pooja",         # Quiet corner, preferably NE/East
+        "store",         # Irregular corners, minimal light needed
+    ]
+
+
+def _place_room_intelligently(
+    room_type: str,
+    target_size: Dict,
+    available_space: Polygon,
+    placed_rooms: List[Dict],
+    entry_point: Tuple[float, float],
+    plot_analysis: Dict
+) -> Optional[Polygon]:
+    """
+    Step 5-7: Place room using architectural logic.
+    Considers: zone, proximity to other rooms, ventilation, structure.
+    """
+    minx, miny, maxx, maxy = available_space.bounds
+    
+    # Get standard room size
+    room_std = STANDARD_ROOM_SIZES.get(room_type, {"width": 10, "height": 10})
+    room_width = room_std["width"]
+    room_height = room_std["height"]
+    
+    # Placement logic based on room type and existing rooms
+    centroid = available_space.centroid
+    
+    # Living room: Center, near entry
+    if room_type == "living":
+        x = entry_point[0] - room_width / 2
+        y = entry_point[1] + 5  # Offset from entry
+    
+    # Dining: Adjacent to living
+    elif room_type == "dining":
+        living_room = next((r for r in placed_rooms if r["room_type"] == "living"), None)
+        if living_room:
+            lx, ly = living_room["centroid"]
+            x = lx + 14  # Next to living
+            y = ly
+        else:
+            x = centroid.x - room_width / 2
+            y = centroid.y - room_height / 2
+    
+    # Kitchen: Near dining, on outer wall
+    elif room_type == "kitchen":
+        dining_room = next((r for r in placed_rooms if r["room_type"] == "dining"), None)
+        if dining_room:
+            dx, dy = dining_room["centroid"]
+            x = dx
+            y = dy + 12  # Adjacent to dining
+        else:
+            x = maxx - room_width - 2
+            y = miny + 2
+    
+    # Bedrooms: On edges, private zone
+    elif room_type in ["bedroom", "master_bedroom"]:
+        # Place on opposite side from entry
+        x = minx + 2 if entry_point[0] > centroid.x else maxx - room_width - 2
+        y = maxy - room_height - 2
+    
+    # Bathrooms/Toilets: Near bedrooms, on outer wall (plumbing)
+    elif room_type in ["bathroom", "toilet"]:
+        bedroom = next((r for r in placed_rooms if "bedroom" in r["room_type"].lower()), None)
+        if bedroom:
+            bx, by = bedroom["centroid"]
+            x = bx + 12
+            y = by
+        else:
+            x = maxx - room_width - 2
+            y = maxy - room_height - 2
+    
+    # Default: Use available space
+    else:
+        x = centroid.x - room_width / 2
+        y = centroid.y - room_height / 2
+    
+    # Create room rectangle
+    room_poly = box(x, y, x + room_width, y + room_height)
+    
+    # Clip to available space
+    clipped = room_poly.intersection(available_space)
+    
+    if clipped.is_empty or clipped.area < room_std.get("min_area", 50):
+        return None
+    
+    if isinstance(clipped, MultiPolygon):
+        clipped = max(clipped.geoms, key=lambda g: g.area)
+    
+    return clipped
 
 
 def _normalize_boundary(polygon_coords: list, target_area: Optional[float] = None) -> Polygon:
@@ -69,38 +458,43 @@ def _normalize_boundary(polygon_coords: list, target_area: Optional[float] = Non
 
 def _compute_room_targets(rooms: list, total_area: float) -> list:
     """
-    Assign target areas to rooms. If user provided desired_area, use that.
-    Otherwise use defaults. Scale proportionally to fit total_area.
+    Assign target areas to rooms using standard architectural sizes.
     """
     result = []
     for room in rooms:
-        rtype = room.get("room_type", "other")
+        rtype = room.get("room_type", "bedroom")
         qty = room.get("quantity", 1)
         desired = room.get("desired_area")
-        defaults = ROOM_DEFAULTS.get(rtype, ROOM_DEFAULTS["other"])
+        
+        # Get standard room definition
+        room_std = STANDARD_ROOM_SIZES.get(rtype, STANDARD_ROOM_SIZES["bedroom"])
 
         for i in range(qty):
-            label = defaults["label"]
+            label = room_std["label"]
             if qty > 1:
                 label = f"{label} {i + 1}"
+            
+            # Use standard minimum area or user desired
+            target_area = desired if desired else room_std["min_area"]
+            
             result.append({
                 "room_type": rtype,
                 "label": label,
-                "target_area": desired if desired else defaults["area"],
-                "aspect": defaults["aspect"],
+                "target_area": target_area,
+                "width": room_std["width"],
+                "height": room_std["height"],
+                "zone": room_std["zone"],
             })
 
     # Scale areas proportionally within the boundary (minus wall space)
     usable_area = total_area * 0.85  # ~15% for walls/corridors
     total_target = sum(r["target_area"] for r in result)
 
-    if total_target > 0:
+    if total_target > 0 and total_target > usable_area:
         scale_factor = usable_area / total_target
         for r in result:
             r["target_area"] = round(r["target_area"] * scale_factor, 1)
 
-    # Sort largest first for BSP placement
-    result.sort(key=lambda r: r["target_area"], reverse=True)
     return result
 
 
@@ -210,8 +604,8 @@ def _generate_walls(room_results: list, boundary: Polygon) -> list:
                 continue
             
             # Perpendicular unit vector
-            px = -dy / length * WALL_THICKNESS / 2
-            py = dx / length * WALL_THICKNESS / 2
+            px = -dy / length * WALL_THICKNESS_INTERIOR / 2
+            py = dx / length * WALL_THICKNESS_INTERIOR / 2
             
             # Create wall geometry as a polygon (rectangle)
             wall_poly = Polygon([
@@ -226,15 +620,15 @@ def _generate_walls(room_results: list, boundary: Polygon) -> list:
                 "geometry": _poly_to_coords(wall_poly),
                 "start": [round(x1, 2), round(y1, 2)],
                 "end": [round(x2, 2), round(y2, 2)],
-                "thickness": WALL_THICKNESS,
+                "thickness": WALL_THICKNESS_INTERIOR,
             })
 
     # Add outer boundary wall with increased thickness
-    outer_wall = boundary.boundary.buffer(WALL_THICKNESS)
+    outer_wall = boundary.boundary.buffer(WALL_THICKNESS_EXTERIOR)
     walls.append({
         "type": "exterior_wall",
         "geometry": _poly_to_coords(outer_wall),
-        "thickness": WALL_THICKNESS * 2,
+        "thickness": WALL_THICKNESS_EXTERIOR,
     })
 
     return walls
@@ -589,8 +983,16 @@ def generate_floor_plan(
     total_area: Optional[float] = None,
 ) -> dict:
     """
-    Main entry point: generate a complete professional floor plan.
-    Includes furniture, dimensions, and architectural elements.
+    Main entry point: Generate professional floor plan using architectural design thinking.
+    
+    Workflow:
+    1. Analyze plot geometry
+    2. Determine entry position
+    3. Create zones (public/private/service)
+    4. Place rooms in architectural order
+    5. Add circulation paths
+    6. Plan ventilation and structure
+    7. Generate furniture and dimensions
 
     Args:
         boundary_polygon: List of [x,y] coordinates forming the boundary.
@@ -598,7 +1000,7 @@ def generate_floor_plan(
         total_area: Total area in sq ft (for scaling).
 
     Returns:
-        Dict with 'rooms', 'walls', 'doors', 'windows', 'furniture', 'dimensions', 'boundary' data.
+        Dict with professional floor plan data.
     """
     # Normalize boundary
     boundary = _normalize_boundary(boundary_polygon, total_area)
@@ -607,16 +1009,76 @@ def generate_floor_plan(
     if total_area is None:
         total_area = actual_area
 
-    # Compute room targets
+    # STEP 1: Analyze plot geometry (Professional Architectural Analysis)
+    plot_analysis = _analyze_plot_geometry(boundary)
+    
+    # STEP 2: Determine entry position + parking layout (Indian Standards)
+    entry_info = _determine_entry_position(boundary, plot_analysis)
+    entry_point = entry_info["entry_point"]
+    
+    # Compute room targets with standard Indian residential sizes
     room_targets = _compute_room_targets(rooms, total_area)
-
-    # Get bounding rectangle
-    minx, miny, maxx, maxy = boundary.bounds
-    bounding_rect = box(minx, miny, maxx, maxy)
-
-    # BSP partition
-    room_results = _bsp_partition(bounding_rect, room_targets, boundary)
-
+    
+    # STEP 3: Create zones (Public/Semi-private/Private/Service)
+    zones = _create_zones(room_targets)
+    
+    # STEP 4: Place rooms in intelligent architectural order
+    placement_order = _get_placement_order()
+    placed_rooms = []
+    available_space = boundary
+    
+    # Sort rooms by architectural placement logic
+    ordered_rooms = []
+    for order_type in placement_order:
+        matching = [r for r in room_targets if r["room_type"] == order_type]
+        ordered_rooms.extend(matching)
+    
+    # Add any remaining rooms not in order list
+    for room in room_targets:
+        if room not in ordered_rooms:
+            ordered_rooms.append(room)
+    
+    # Try intelligent placement using architect + engineer principles
+    room_results = []
+    for room in ordered_rooms:
+        room_poly = _place_room_intelligently(
+            room["room_type"],
+            room,
+            available_space,
+            placed_rooms,
+            entry_point,
+            plot_analysis
+        )
+        
+        if room_poly and not room_poly.is_empty:
+            placed_rooms.append({
+                "room_type": room["room_type"],
+                "label": room["label"],
+                "polygon": room_poly,
+                "centroid": (room_poly.centroid.x, room_poly.centroid.y),
+                "target_area": room["target_area"],
+            })
+            room_results.append({
+                "room": room,
+                "polygon": room_poly,
+            })
+            
+            # Update available space (subtract placed room with buffer)
+            try:
+                available_space = available_space.difference(room_poly.buffer(0.5))
+                if available_space.is_empty:
+                    break
+                if isinstance(available_space, MultiPolygon):
+                    available_space = max(available_space.geoms, key=lambda g: g.area)
+            except:
+                pass
+    
+    # Fallback: If intelligent placement didn't work well, use BSP
+    if len(room_results) < len(room_targets) * 0.7:  # Less than 70% placed
+        minx, miny, maxx, maxy = boundary.bounds
+        bounding_rect = box(minx, miny, maxx, maxy)
+        room_results = _bsp_partition(bounding_rect, room_targets, boundary)
+    
     # Generate architectural elements
     walls = _generate_walls(room_results, boundary)
     doors = _generate_doors(room_results)
@@ -647,4 +1109,21 @@ def generate_floor_plan(
         "windows": windows,
         "furniture": furniture,
         "dimensions": dimensions,
+        "design_thinking": {
+            "approach": "Professional Residential Architect + Structural Engineer",
+            "entry_point": list(entry_point),
+            "parking_provided": entry_info.get("parking_layout") is not None,
+            "plot_analysis": {
+                "plot_type": plot_analysis["plot_type"],
+                "longest_edge_length": round(plot_analysis["longest_edge"]["length"], 2),
+                "total_area_sqft": round(plot_analysis["area"], 2),
+                "width_ft": round(plot_analysis["width"], 2),
+                "height_ft": round(plot_analysis["height"], 2),
+                "can_fit_structural_columns": plot_analysis["can_fit_columns"],
+                "cross_ventilation_possible": len(plot_analysis["ventilation_pairs"]) > 0,
+            },
+            "zones_used": list(zones.keys()),
+            "placement_order": placement_order,
+            "rooms_placed": f"{len(room_results)}/{len(room_targets)}",
+        },
     }

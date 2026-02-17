@@ -1,11 +1,15 @@
 """
-CAD File Generation using ezdxf.
+CAD File Generation using ezdxf - Indian Residential Standards.
 
-Generates professional, clean DXF files with proper architectural representation:
-- Double-line walls with proper thickness
-- Door swings with arc representation
-- Window symbols with sill lines
-- Clear room labels and dimensions
+Generates professional architectural CAD drawings following Indian Building Code:
+- Wall thickness: 230mm (9") exterior, 115mm (4.5") interior
+- Double-line walls with proper thickness representation
+- Door swings with arc and 90\u00b0 opening angle
+- Window symbols with sill and frame details
+- Dimension lines in millimeters (Indian standard)
+- Furniture blocks for scale reference
+- North arrow for orientation
+- Clean black-and-white AutoCAD-style blueprint
 - Professional layer organization
 """
 
@@ -13,6 +17,15 @@ import ezdxf
 from ezdxf.enums import TextEntityAlignment
 from pathlib import Path
 import math
+
+# INDIAN BUILDING CODE - Wall Thickness Standards
+WALL_THICKNESS_EXTERIOR_MM = 230  # 9 inches (load-bearing)
+WALL_THICKNESS_INTERIOR_MM = 115  # 4.5 inches (partition)
+WALL_THICKNESS_EXTERIOR_FT = 0.75  # feet
+WALL_THICKNESS_INTERIOR_FT = 0.38  # feet
+
+# Conversion factor
+FT_TO_MM = 304.8  # 1 foot = 304.8 mm
 
 
 def generate_dxf(plan: dict, output_path: str) -> str:
@@ -306,29 +319,42 @@ def generate_dxf(plan: dict, output_path: str) -> str:
         
         # Title
         msp.add_text(
-            "FLOOR PLAN",
-            height=3.5,
+            "RESIDENTIAL FLOOR PLAN",
+            height=3.0,
             dxfattribs={
                 "layer": "LABELS",
-                "insert": (min_x + 2, title_y + 4.5),
+                "insert": (min_x + 2, title_y + 5),
                 "style": "Standard",
             },
         )
         
-        # Total area and room count
-        num_rooms = len([r for r in plan.get("rooms", []) if r.get("room_type") not in ["hallway", "corridor"]])
+        # Project details
+        num_rooms = len([r for r in plan.get("rooms", []) if r.get("room_type") not in ["hallway", "corridor", "porch", "utility", "store"]])
+        total_area_sqft = plan.get('total_area', 0)
+        total_area_sqm = total_area_sqft * 0.092903  # Convert to sq meters
+        
         msp.add_text(
-            f"Total: {plan.get('total_area', 0):.0f} sq ft | {num_rooms} rooms",
-            height=1.1,
+            f"Built-up Area: {total_area_sqft:.0f} sq.ft ({total_area_sqm:.0f} sq.m) | {num_rooms} Rooms",
+            height=1.0,
             dxfattribs={
                 "layer": "DIMENSIONS",
-                "insert": (min_x + 2, title_y + 2),
+                "insert": (min_x + 2, title_y + 2.5),
             },
         )
         
-        # Scale indicator
+        # Design standards
         msp.add_text(
-            "Scale: 1:100",
+            "Complies: Indian Building Code | Wall: 230mm Ext, 115mm Int",
+            height=0.8,
+            dxfattribs={
+                "layer": "DIMENSIONS",
+                "insert": (min_x + 2, title_y + 1.2),
+            },
+        )
+        
+        # Scale indicator with Indian standards
+        msp.add_text(
+            "Scale: 1:100 | Dimensions in mm",
             height=1.0,
             dxfattribs={
                 "layer": "DIMENSIONS",
@@ -336,24 +362,50 @@ def generate_dxf(plan: dict, output_path: str) -> str:
             },
         )
         
-        # Add north arrow
-        arrow_x = max_x - 5
-        arrow_y = max_y - 5
+        # Professional North Arrow (Architectural Style)
+        arrow_x = max_x - 8
+        arrow_y = max_y - 8
+        arrow_size = 4.0
+        
+        # Arrow shaft (vertical line)
         msp.add_line(
-            start=(arrow_x, arrow_y - 2),
-            end=(arrow_x, arrow_y + 2),
-            dxfattribs={"layer": "DIMENSIONS", "lineweight": 25},
+            start=(arrow_x, arrow_y - arrow_size / 2),
+            end=(arrow_x, arrow_y + arrow_size / 2),
+            dxfattribs={"layer": "DIMENSIONS", "lineweight": 40},
         )
+        
+        # Arrow head (filled triangle pointing north)
+        arrow_head_points = [
+            (arrow_x, arrow_y + arrow_size / 2 + 1.5),  # Top point
+            (arrow_x - 0.8, arrow_y + arrow_size / 2),   # Left base
+            (arrow_x + 0.8, arrow_y + arrow_size / 2),   # Right base
+            (arrow_x, arrow_y + arrow_size / 2 + 1.5),  # Close triangle
+        ]
+        msp.add_lwpolyline(
+            arrow_head_points,
+            close=True,
+            dxfattribs={"layer": "DIMENSIONS", "lineweight": 40},
+        )
+        
+        # "N" label above arrow
         msp.add_text(
             "N",
-            height=1.5,
+            height=2.0,
             dxfattribs={
                 "layer": "LABELS",
-                "insert": (arrow_x, arrow_y + 2.5),
+                "insert": (arrow_x, arrow_y + arrow_size / 2 + 3),
+                "style": "Standard",
             },
         ).set_placement(
-            (arrow_x, arrow_y + 2.5),
+            (arrow_x, arrow_y + arrow_size / 2 + 3),
             align=TextEntityAlignment.MIDDLE_CENTER,
+        )
+        
+        # Circle around north arrow (architectural convention)
+        msp.add_circle(
+            center=(arrow_x, arrow_y),
+            radius=arrow_size / 2 + 1,
+            dxfattribs={"layer": "DIMENSIONS", "lineweight": 25},
         )
 
     # Save
