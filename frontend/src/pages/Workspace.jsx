@@ -54,6 +54,17 @@ export default function Workspace() {
         setError(null)
     }
 
+    const checkBackend = async () => {
+        try {
+            const r = await fetch('/api/health')
+            setBackendHealthy(r.ok)
+            return r.ok
+        } catch (e) {
+            setBackendHealthy(false)
+            return false
+        }
+    }
+
     // Step 1: Create a project if we don't have one yet
     const ensureProject = async (totalArea) => {
         if (projectId) return projectId
@@ -221,6 +232,17 @@ export default function Workspace() {
                 </Link>
                 <div className="workspace-nav-right">
                     <span className="project-label">Workspace</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginRight: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem' }}>
+                            <span style={{ width: 10, height: 10, borderRadius: 99, background: backendHealthy ? '#10b981' : '#ef4444', display: 'inline-block' }} />
+                            <span style={{ color: backendHealthy ? '#065f46' : '#7f1d1d', fontWeight: 600 }}>{backendHealthy ? 'Backend OK' : 'Backend Down'}</span>
+                        </div>
+                        {!backendHealthy && (
+                            <button className="btn btn-secondary btn-sm" onClick={() => checkBackend()}>
+                                Retry
+                            </button>
+                        )}
+                    </div>
                     <button className="btn btn-secondary btn-sm" onClick={handleNewProject}>
                         <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
