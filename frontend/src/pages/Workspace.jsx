@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import ChatInterface from '../components/ChatInterface'
 import FormInterface from '../components/FormInterface'
 import PlanPreview from '../components/PlanPreview'
+import BoundaryPreview from '../components/BoundaryPreview'
 import Viewer3D from '../components/Viewer3D'
 import ExportPanel from '../components/ExportPanel'
 
@@ -290,16 +291,20 @@ export default function Workspace() {
                     )}
                     {previewMode === '2d' ? (
                         plan ? <PlanPreview plan={plan} /> : (
-                            !loading && (
-                                <div className="preview-empty">
-                                    <div className="preview-empty-icon">
-                                        <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-                                        </svg>
+                            boundaryData ? (
+                                <BoundaryPreview boundaryData={boundaryData} />
+                            ) : (
+                                !loading && (
+                                    <div className="preview-empty">
+                                        <div className="preview-empty-icon">
+                                            <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                                            </svg>
+                                        </div>
+                                        <h3>No Floor Plan Yet</h3>
+                                        <p>Use the chat or form on the left to generate your first floor plan</p>
                                     </div>
-                                    <h3>No Floor Plan Yet</h3>
-                                    <p>Use the chat or form on the left to generate your first floor plan</p>
-                                </div>
+                                )
                             )
                         )
                     ) : (
