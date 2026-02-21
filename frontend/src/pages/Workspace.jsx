@@ -163,6 +163,7 @@ export default function Workspace() {
 
             setBoundary(footprintData.usable_polygon)
             setBoundaryData(resultData)
+            setPreviewMode('boundary')
             setLoading(false)
             return resultData
         } catch (err) {
@@ -260,6 +261,17 @@ export default function Workspace() {
                             </svg>
                             2D Plan
                         </button>
+                        {boundaryData && (
+                            <button
+                                className={`preview-tab ${previewMode === 'boundary' ? 'active' : ''}`}
+                                onClick={() => setPreviewMode('boundary')}
+                            >
+                                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ verticalAlign: -2 }}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm0 8a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6z" />
+                                </svg>
+                                Boundary
+                            </button>
+                        )}
                         <button
                             className={`preview-tab ${previewMode === '3d' ? 'active' : ''}`}
                             onClick={() => setPreviewMode('3d')}
@@ -305,6 +317,22 @@ export default function Workspace() {
                                         <p>Use the chat or form on the left to generate your first floor plan</p>
                                     </div>
                                 )
+                            )
+                        )
+                    ) : previewMode === 'boundary' ? (
+                        boundaryData ? (
+                            <BoundaryPreview boundaryData={boundaryData} />
+                        ) : (
+                            !loading && (
+                                <div className="preview-empty">
+                                    <div className="preview-empty-icon">
+                                        <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm0 8a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6z" />
+                                        </svg>
+                                    </div>
+                                    <h3>No Boundary Uploaded</h3>
+                                    <p>Upload a DXF file to see the plot boundary with setback overlay</p>
+                                </div>
                             )
                         )
                     ) : (

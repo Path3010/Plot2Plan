@@ -151,7 +151,11 @@ export default function BoundaryPreview({ boundaryData }) {
                         </clipPath>
                     </defs>
 
-                    {/* Label: "Setback Zone" between boundaries — subtle red hatch area */}
+                    {/* Setback zone hatching — covers boundary then "cut out" usable area via rule */}
+                    <g clipPath="url(#setback-clip)">
+                        <path d={boundaryPath} fill="url(#setback-hatch)" />
+                        <path d={usablePath} fill="var(--bg-primary, #ffffff)" />
+                    </g>
 
                     {/* Vertex dots on boundary */}
                     {boundaryData.boundary.slice(0, -1).map(([x, y], i) => (
