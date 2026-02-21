@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import ChatInterface from '../components/ChatInterface'
 import FormInterface from '../components/FormInterface'
@@ -23,6 +23,26 @@ export default function Workspace() {
     const [boundaryData, setBoundaryData] = useState(null)  // full Phase 1 data
     const [sessionId] = useState(() => generateSessionId())
     const [error, setError] = useState(null)
+
+    const [backendHealthy, setBackendHealthy] = useState(true)
+    const backendUrl = '/api'
+
+    useEffect(() => {
+        let mounted = true
+        const check = async () => {
+            try {
+                const res = await fetch('/api/health', { cache: 'no-store' })
+                if (!mounted) return
+                setBackendHealthy(res.ok)
+            } catch (e) {
+                if (!mounted) return
+                setBackendHealthy(false)
+            }
+        }
+        check()
+        const t = setInterval(check, 10000)
+        return () => { mounted = false; clearInterval(t) }
+    }, [])
 
     const handleNewProject = () => {
         setPlan(null)
@@ -104,6 +124,19 @@ export default function Workspace() {
             let pid = projectId
             if (!pid) {
                 try { pid = await ensureProject(1200) } catch { pid = null }
+            }
+
+            // Guard: ensure backend reachable before uploading
+            if (!backendHealthy) {
+                try {
+                    const ping = await fetch('/api/health')
+                    if (!ping.ok) throw new Error('unhealthy')
+                    setBackendHealthy(true)
+                } catch (err) {
+                    setError('Backend is unreachable. Please start the backend server.')
+                    setLoading(false)
+                    return null
+                }
             }
 
             // Step 1: Upload file → get file_id
@@ -243,6 +276,17 @@ export default function Workspace() {
                             boundary={boundary}
                             boundaryData={boundaryData}
                             loading={loading}
+                            backendHealthy={backendHealthy}
+                            onCheckBackend={async () => {
+                                try {
+                                    const r = await fetch('/api/health')
+                                    setBackendHealthy(r.ok)
+                                    return r.ok
+                                } catch (e) {
+                                    setBackendHealthy(false)
+                                    return false
+                                }
+                            }}
                         />
                     )}
                 </div>

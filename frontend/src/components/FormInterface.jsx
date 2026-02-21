@@ -15,7 +15,7 @@ const ROOM_TYPES = [
     { key: 'hallway', label: 'Hallway', icon: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7' },
 ]
 
-export default function FormInterface({ onGenerate, onBoundaryUpload, boundary, boundaryData, loading }) {
+export default function FormInterface({ onGenerate, onBoundaryUpload, boundary, boundaryData, loading, backendHealthy = true, onCheckBackend }) {
     const [step, setStep] = useState(0)
     const [inputMode, setInputMode] = useState('plot') // 'plot' or 'boundary'
     const [totalArea, setTotalArea] = useState(1200)
@@ -200,6 +200,18 @@ export default function FormInterface({ onGenerate, onBoundaryUpload, boundary, 
                                 <p><strong>Click to upload</strong> your plot boundary</p>
                                 <p style={{ fontSize: '0.72rem' }}>DXF file recommended. PNG/JPEG also accepted.</p>
                             </div>
+
+                            {/* Show backend unreachable warning inside upload panel */}
+                            {!backendHealthy && (
+                                <div style={{ marginTop: '0.5rem', padding: '0.6rem', borderRadius: '8px', background: '#fee2e2', border: '1px solid #fecaca', color: '#7f1d1d', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div>Backend unreachable — unable to upload. Start the backend and retry.</div>
+                                    <div>
+                                        <button className="btn btn-secondary btn-sm" onClick={async (e) => { e.stopPropagation(); onCheckBackend && await onCheckBackend(); }}>
+                                            Retry
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Boundary data summary after upload */}
                             {boundaryData && (
