@@ -65,6 +65,20 @@ export default function Workspace() {
         }
     }
 
+    // Small helper that rejects if fetch doesn't complete within `ms` milliseconds
+    const fetchWithTimeout = (url, opts = {}, ms = 15000) => {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('Request timed out')), ms)
+            fetch(url, opts).then(res => {
+                clearTimeout(timer)
+                resolve(res)
+            }).catch(err => {
+                clearTimeout(timer)
+                reject(err)
+            })
+        })
+    }
+
     // Step 1: Create a project if we don't have one yet
     const ensureProject = async (totalArea) => {
         if (projectId) return projectId
@@ -156,10 +170,10 @@ export default function Workspace() {
             if (pid) uploadForm.append('project_id', pid)
             uploadForm.append('scale', '1.0')
 
-            const uploadRes = await fetch('/api/upload-boundary', {
+            const uploadRes = await fetchWithTimeout('/api/upload-boundary', {
                 method: 'POST',
                 body: uploadForm,
-            })
+            }, 20000)
 
             if (!uploadRes.ok) {
                 const errData = await uploadRes.json().catch(() => ({}))
@@ -171,7 +185,7 @@ export default function Workspace() {
 
             // Step 2: Extract boundary polygon
             setLoadingMessage('Extracting boundary...')
-            const extractRes = await fetch(`/api/extract-boundary/${fileId}?scale=1.0`)
+            const extractRes = await fetchWithTimeout(`/api/extract-boundary/${fileId}?scale=1.0`, {}, 15000)
 
             if (!extractRes.ok) {
                 const errData = await extractRes.json().catch(() => ({}))
@@ -182,9 +196,9 @@ export default function Workspace() {
 
             // Step 3: Compute buildable footprint (India MVP setback)
             setLoadingMessage('Computing buildable area...')
-            const footprintRes = await fetch(`/api/buildable-footprint/${fileId}?region=india_mvp`, {
+            const footprintRes = await fetchWithTimeout(`/api/buildable-footprint/${fileId}?region=india_mvp`, {
                 method: 'POST',
-            })
+            }, 20000)
 
             if (!footprintRes.ok) {
                 const errData = await footprintRes.json().catch(() => ({}))
