@@ -10,6 +10,7 @@ from .loaders import load_usable_polygon, save_usable_polygon, load_min_areas, l
 from .entrance import place_entrance
 from .room_model import Room
 from .doors import Door, place_doors
+from .slicing import generate_slicing_candidate
 
 __all__ = [
     "LayoutGenerator",
@@ -21,4 +22,5 @@ __all__ = [
     "Room",
     "Door",
     "place_doors",
+    "generate_slicing_candidate",
 ]

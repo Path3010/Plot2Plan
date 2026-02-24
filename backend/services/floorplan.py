@@ -1179,7 +1179,7 @@ def generate_floor_plan(
             "corridor": engine_result.get("corridor", {}),
         },
         "design_thinking": {
-            "approach": "Layout Engine — Grid + Treemap (200 candidates, best score)",
+            "approach": "Layout Engine — Slicing Floorplan + SA (200 candidates, best score)",
             "entry_point": list(entry_point),
             "parking_provided": entry_info.get("parking_layout") is not None,
             "plot_analysis": {

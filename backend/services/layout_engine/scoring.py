@@ -102,6 +102,37 @@ def corridor_penalty(rooms: List[Room], boundary: Polygon) -> float:
     return max(0.0, min(1.0, wasted_fraction))
 
 
+def shape_quality_score(rooms: List[Room]) -> float:
+    """
+    Score ∈ [0, 1].  1.0 means all rooms have good proportions.
+
+    Penalises extreme aspect ratios — rooms should be roughly
+    1:1 to 1:2 for residential use.
+    """
+    if not rooms:
+        return 1.0
+    penalties = []
+    for r in rooms:
+        if r.room_type == "entrance":
+            continue  # skip entrance
+        minx, miny, maxx, maxy = r.polygon.bounds
+        w = maxx - minx
+        h = maxy - miny
+        if w < 0.01 or h < 0.01:
+            penalties.append(1.0)
+            continue
+        ar = max(w / h, h / w)
+        if ar <= 1.5:
+            penalties.append(0.0)
+        elif ar <= 2.2:
+            penalties.append((ar - 1.5) / 0.7 * 0.5)
+        else:
+            penalties.append(1.0)
+    if not penalties:
+        return 1.0
+    return max(0.0, 1.0 - (sum(penalties) / len(penalties)))
+
+
 # ---------------------------------------------------------------------------
 # Combined score
 # ---------------------------------------------------------------------------
@@ -125,23 +156,27 @@ def score_layout(
         Pairs of (room_type_a, room_type_b) that should be adjacent.
     weights : dict, optional
         Override default component weights.  Keys: ``area``, ``adjacency``,
-        ``corridor``.
+        ``corridor``, ``shape``.
 
     Returns
     -------
     dict
-        ``total``, ``area``, ``adjacency``, ``corridor`` scores.
+        ``total``, ``area``, ``adjacency``, ``corridor``, ``shape`` scores.
     """
-    w = weights or {"area": 0.4, "adjacency": 0.35, "corridor": 0.25}
+    w = weights or {
+        "area": 0.30, "adjacency": 0.25, "corridor": 0.20, "shape": 0.25,
+    }
 
     s_area = area_accuracy_score(rooms)
     s_adj = adjacency_score(rooms, desired_adjacencies)
     s_corr = 1.0 - corridor_penalty(rooms, boundary)  # higher is better
+    s_shape = shape_quality_score(rooms)
 
     total = (
-        w.get("area", 0.4) * s_area
-        + w.get("adjacency", 0.35) * s_adj
-        + w.get("corridor", 0.25) * s_corr
+        w.get("area", 0.30) * s_area
+        + w.get("adjacency", 0.25) * s_adj
+        + w.get("corridor", 0.20) * s_corr
+        + w.get("shape", 0.25) * s_shape
     )
 
     return {
@@ -149,4 +184,5 @@ def score_layout(
         "area": round(s_area, 4),
         "adjacency": round(s_adj, 4),
         "corridor": round(s_corr, 4),
+        "shape": round(s_shape, 4),
     }

@@ -342,10 +342,11 @@ check("Total score is weighted sum",
       scores14["total"] > 0,
       f"total={scores14['total']:.4f}")
 
-# Verify weights (default: area=0.4, adjacency=0.35, corridor=0.25)
-expected_total = (0.4 * scores14["area"]
-                  + 0.35 * scores14["adjacency"]
-                  + 0.25 * scores14["corridor"])
+# Verify weights (default: area=0.30, adjacency=0.25, corridor=0.20, shape=0.25)
+expected_total = (0.30 * scores14["area"]
+                  + 0.25 * scores14["adjacency"]
+                  + 0.20 * scores14["corridor"]
+                  + 0.25 * scores14.get("shape", 0))
 check("Total ≈ weighted sum of components",
       abs(scores14["total"] - round(expected_total, 4)) < 0.01,
       f"computed={expected_total:.4f}, reported={scores14['total']}")

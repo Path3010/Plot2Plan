@@ -1,8 +1,12 @@
 """
 Main layout generator — public API for Phase 3.
 
-Coordinates grid subdivision, room placement, geometry conversion,
+Coordinates slicing-floorplan generation, simulated annealing,
+grid subdivision, room placement, geometry conversion,
 clipping, validation, scoring, and candidate selection.
+
+Primary method:  Slicing floorplan + simulated annealing  (best quality)
+Fallback:        Grid subdivision / squarified treemap     (variety)
 """
 
 import json
@@ -22,6 +26,7 @@ from .loaders import load_usable_polygon, load_min_areas
 from .placement import compute_room_specs, place_all_rooms
 from .room_model import Room
 from .scoring import score_layout, corridor_penalty
+from .slicing import generate_slicing_candidate, ARCH_ADJACENCY, MAX_ASPECT_RATIO
 from .subdivision import SubdivisionGrid
 from .treemap import treemap_subdivide
 
@@ -102,6 +107,69 @@ class LayoutGenerator:
             min_areas=min_areas,
             desired_adjacencies=desired_adjacencies,
         )
+
+    # ------------------------------------------------------------------
+    # Internal: single candidate via SLICING + SIMULATED ANNEALING
+    # ------------------------------------------------------------------
+
+    def _generate_slicing_candidate(
+        self, seed: Optional[int] = None, sa_iterations: int = 800,
+    ) -> Optional[List[Room]]:
+        """
+        Generate one layout candidate using the slicing-tree algorithm
+        with simulated annealing optimisation.
+
+        This is the **primary** generation method — it produces
+        architecturally zoned, well-proportioned layouts.
+        """
+        minx, miny, maxx, maxy = self.boundary.bounds
+        width = maxx - minx
+        height = maxy - miny
+
+        # Build room_specs from requirements; target_area ∝ size²
+        # Scale so total matches the bounding rectangle area
+        raw_areas = [r["size"] ** 2 for r in self.room_requirements]
+        total_wanted = sum(raw_areas) if raw_areas else 1.0
+        boundary_area = width * height
+        scale = boundary_area / total_wanted
+
+        room_specs = []
+        for req, raw in zip(self.room_requirements, raw_areas):
+            room_specs.append({
+                "room_type": req["room_type"],
+                "target_area": raw * scale,
+            })
+
+        slicing_rooms, _score = generate_slicing_candidate(
+            room_specs=room_specs,
+            boundary_width=width,
+            boundary_height=height,
+            origin_x=minx,
+            origin_y=miny,
+            sa_iterations=sa_iterations,
+            seed=seed,
+            desired_adjacencies=self.desired_adjacencies,
+        )
+
+        if not slicing_rooms:
+            return None
+
+        Room.reset_counter()
+        rooms: List[Room] = []
+        for sr in slicing_rooms:
+            poly = sr["polygon"]
+            clipped = clip_to_boundary(poly, self.boundary)
+            if clipped is None or clipped.area < 0.1:
+                return None
+            rooms.append(
+                Room(
+                    room_type=sr["room_type"],
+                    polygon=clipped,
+                    target_area=sr["target_area"],
+                    floor=0,
+                )
+            )
+        return rooms
 
     # ------------------------------------------------------------------
     # Internal: single candidate via grid method
@@ -201,7 +269,20 @@ class LayoutGenerator:
             if r.area < min_a:
                 return False
 
-        # 2. Overlap detection (entrance may overlap adjacent rooms — exclude it)
+        # 2. Aspect ratio check — reject extremely elongated rooms
+        for r in rooms:
+            if r.room_type == "entrance":
+                continue  # entrance is intentionally narrow
+            minx, miny, maxx, maxy = r.polygon.bounds
+            w = maxx - minx
+            h = maxy - miny
+            if w < 0.01 or h < 0.01:
+                return False
+            ar = max(w / h, h / w)
+            if ar > MAX_ASPECT_RATIO + 0.5:  # hard reject at 2.7:1
+                return False
+
+        # 3. Overlap detection (entrance may overlap adjacent rooms — exclude it)
         non_entrance = [r.polygon for r in rooms if r.room_type != "entrance"]
         if has_overlaps(non_entrance, tolerance=0.05):
             return False
@@ -254,7 +335,8 @@ class LayoutGenerator:
         n_candidates : int
             How many candidates to attempt (invalid ones are discarded).
         method : str
-            ``"grid"``, ``"treemap"``, or ``"mixed"`` (default).
+            ``"slicing"`` (default primary), ``"grid"``, ``"treemap"``,
+            or ``"mixed"`` (70 % slicing, 15 % grid, 15 % treemap).
 
         Returns
         -------
@@ -267,13 +349,18 @@ class LayoutGenerator:
         for i in range(n_candidates):
             seed = i * 17 + 42  # deterministic but varied
 
-            if method == "grid":
+            if method == "slicing":
+                rooms = self._generate_slicing_candidate(seed)
+            elif method == "grid":
                 rooms = self._generate_grid_candidate(seed)
             elif method == "treemap":
                 rooms = self._generate_treemap_candidate(seed)
             else:
-                # mixed: alternate between methods
-                if i % 2 == 0:
+                # mixed: 70 % slicing, 15 % grid, 15 % treemap
+                r = i % 20
+                if r < 14:
+                    rooms = self._generate_slicing_candidate(seed)
+                elif r < 17:
                     rooms = self._generate_grid_candidate(seed)
                 else:
                     rooms = self._generate_treemap_candidate(seed)
@@ -338,16 +425,21 @@ class LayoutGenerator:
 
         for i in range(n_candidates):
             seed = i * 17 + 42
-            if method == "grid":
+
+            if method == "slicing":
+                rooms = self._generate_slicing_candidate(seed)
+            elif method == "grid":
                 rooms = self._generate_grid_candidate(seed)
             elif method == "treemap":
                 rooms = self._generate_treemap_candidate(seed)
             else:
-                rooms = (
-                    self._generate_grid_candidate(seed)
-                    if i % 2 == 0
-                    else self._generate_treemap_candidate(seed)
-                )
+                r = i % 20
+                if r < 14:
+                    rooms = self._generate_slicing_candidate(seed)
+                elif r < 17:
+                    rooms = self._generate_grid_candidate(seed)
+                else:
+                    rooms = self._generate_treemap_candidate(seed)
 
             if rooms is None:
                 continue
