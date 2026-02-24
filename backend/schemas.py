@@ -175,3 +175,42 @@ class AIReviewResponse(BaseModel):
     review_text: str = ""
     scores: dict = {}
     provider: str = "unknown"
+
+
+# ---------- AI Pipeline (4-Stage) ----------
+class PipelineRequest(BaseModel):
+    requirements_json: dict = Field(..., description="Structured requirements from extraction stage")
+
+class PipelineResponse(BaseModel):
+    stage: str = "chat"
+    requirements_json: Optional[dict] = None
+    layout_json: Optional[dict] = None
+    validation_report: Optional[dict] = None
+    compliant: bool = False
+    design_explanation: str = ""
+    dxf_url: Optional[str] = None
+    provider: str = "unknown"
+
+
+# ---------- Architectural Planning Engine ----------
+class EngineProcessRequest(BaseModel):
+    """Unified architectural engine request — auto-detects mode."""
+    message: Optional[str] = None
+    data: Optional[dict] = None
+    history: list = []
+    project_id: Optional[str] = None
+    generatePlan: bool = False
+
+
+class EngineProcessResponse(BaseModel):
+    """Unified architectural engine response."""
+    mode: str
+    reply: Optional[str] = None
+    layout: Optional[dict] = None
+    validation: Optional[dict] = None
+    error: Optional[str] = None
+    suggestion: Optional[str] = None
+    collected: Optional[dict] = None
+    ready: bool = False
+    dxf_url: Optional[str] = None
+    missing_fields: Optional[list] = None

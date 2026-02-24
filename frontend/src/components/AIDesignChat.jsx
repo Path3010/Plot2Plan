@@ -1,18 +1,33 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 
+const PIPELINE_STAGES = [
+    { key: 'chat', label: 'Chat', icon: '1', desc: 'Collecting requirements' },
+    { key: 'extraction', label: 'Extract', icon: '2', desc: 'Structuring data' },
+    { key: 'design', label: 'Design', icon: '3', desc: 'Generating layout' },
+    { key: 'validation', label: 'Validate', icon: '4', desc: 'Checking compliance' },
+    { key: 'generation', label: 'Generate', icon: '5', desc: 'Creating DXF' },
+]
+
+const STAGE_ORDER = ['chat', 'extraction', 'design', 'validation', 'generation', 'complete']
+
 export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, projectId, onReviewPlan, plan }) {
     const [messages, setMessages] = useState([
         {
             role: 'assistant',
-            content: "Welcome to AI Design Advisor powered by Grok!\n\nI'm your senior architect. Tell me about your dream home -- for example:\n\n\"I want a 1200 sqft 3BHK house with Vastu compliance, 2 bathrooms, a pooja room, and parking.\"\n\nI'll analyze your requirements, check Vastu, structural feasibility, and Indian Building Code compliance before generating the plan.",
+            content: "Welcome to NakshaNirman AI Architect.\n\nI'll help you design your dream home step by step.\n\nStart by telling me about your plot — for example:\n\"I have a 30x40 feet plot and need 3 bedrooms, 2 bathrooms.\"\n\nOr just tell me your plot size and I'll guide you through the rest.",
             provider: 'system',
+            stage: 'chat',
         }
     ])
     const [input, setInput] = useState('')
     const [isTyping, setIsTyping] = useState(false)
     const [ws, setWs] = useState(null)
     const [wsReady, setWsReady] = useState(false)
+    const [currentStage, setCurrentStage] = useState('chat')
     const [extractedData, setExtractedData] = useState({ rooms: [], total_area: null })
+    const [layoutJson, setLayoutJson] = useState(null)
+    const [validationReport, setValidationReport] = useState(null)
+    const [requirementsJson, setRequirementsJson] = useState(null)
     const [reviewData, setReviewData] = useState(null)
     const [isReviewing, setIsReviewing] = useState(false)
     const [expandedReasoning, setExpandedReasoning] = useState({})
@@ -28,7 +43,7 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
         extractedRef.current = extractedData
     }, [extractedData])
 
-    // WebSocket connection to AI Design endpoint
+    // WebSocket connection — tries engine endpoint first, falls back to ai-design
     useEffect(() => {
         let socket = null
         let reconnectTimeout = null
@@ -36,7 +51,8 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
         const connect = () => {
             try {
                 const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-                const wsUrl = `${proto}//${window.location.host}/api/ai-design/chat`
+                // Try the new engine endpoint first, fallback to ai-design
+                const wsUrl = `${proto}//${window.location.host}/api/engine/chat`
                 socket = new WebSocket(wsUrl)
 
                 socket.onopen = () => {
@@ -48,29 +64,88 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
                     const data = JSON.parse(event.data)
                     setIsTyping(false)
 
+                    // Update stage — support both 'stage' (ai-design) and 'mode' (engine) fields
+                    const stageOrMode = data.stage || data.mode
+                    if (stageOrMode) {
+                        setCurrentStage(stageOrMode)
+                    }
+
+                    // Build message object
                     const msgObj = {
                         role: 'assistant',
                         content: data.reply,
-                        provider: data.provider || 'unknown',
+                        provider: data.provider || (data.mode ? 'engine' : 'unknown'),
+                        stage: stageOrMode,
+                        stageTransition: data.stage_transition || false,
                         extractedData: data.extracted_data,
+                        requirementsJson: data.requirements_json,
+                        layoutJson: data.layout_json || data.layout,
+                        validationReport: data.validation_report || data.validation,
                     }
                     setMessages(prev => [...prev, msgObj])
 
+                    // Store extracted data
                     if (data.extracted_data) {
                         setExtractedData(prev => {
                             const updated = { ...prev }
                             if (data.extracted_data.total_area) updated.total_area = data.extracted_data.total_area
                             if (data.extracted_data.rooms) {
-                                updated.rooms = [...(updated.rooms || []), ...data.extracted_data.rooms]
+                                updated.rooms = data.extracted_data.rooms
                             }
                             return updated
                         })
                     }
 
-                    if (data.should_generate) {
-                        const current = extractedRef.current
-                        if (current.total_area && current.rooms?.length > 0) {
-                            onGenerate(current.rooms, current.total_area)
+                    if (data.requirements_json) {
+                        setRequirementsJson(data.requirements_json)
+                    }
+
+                    // Support both 'layout_json' (ai-design) and 'layout' (engine)
+                    if (data.layout_json || data.layout) {
+                        setLayoutJson(data.layout_json || data.layout)
+                    }
+
+                    // Support both 'validation_report' (ai-design) and 'validation' (engine)
+                    if (data.validation_report || data.validation) {
+                        setValidationReport(data.validation_report || data.validation)
+                    }
+
+                    // Handle engine 'collected' data (parsed requirements from chat)
+                    if (data.collected) {
+                        setExtractedData(prev => {
+                            const updated = { ...prev }
+                            if (data.collected.total_area) updated.total_area = data.collected.total_area
+                            if (data.collected.bedrooms) {
+                                // Convert collected data to rooms format
+                                const rooms = []
+                                if (data.collected.bedrooms) {
+                                    rooms.push({ room_type: 'master_bedroom', quantity: 1 })
+                                    if (data.collected.bedrooms > 1) {
+                                        rooms.push({ room_type: 'bedroom', quantity: data.collected.bedrooms - 1 })
+                                    }
+                                }
+                                if (data.collected.bathrooms) {
+                                    rooms.push({ room_type: 'bathroom', quantity: data.collected.bathrooms })
+                                }
+                                rooms.push({ room_type: 'living', quantity: 1 })
+                                rooms.push({ room_type: 'kitchen', quantity: 1 })
+                                if (data.collected.extras) {
+                                    data.collected.extras.forEach(e => {
+                                        rooms.push({ room_type: e, quantity: 1 })
+                                    })
+                                }
+                                updated.rooms = rooms
+                            }
+                            return updated
+                        })
+                    }
+
+                    // Auto-generate when pipeline completes
+                    if (data.should_generate && data.extracted_data) {
+                        const rooms = data.extracted_data.rooms || extractedRef.current.rooms
+                        const totalArea = data.extracted_data.total_area || extractedRef.current.total_area
+                        if (totalArea && rooms?.length > 0) {
+                            onGenerate(rooms, totalArea)
                         }
                     }
                 }
@@ -178,8 +253,9 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
         if (result) {
             setMessages(prev => [...prev, {
                 role: 'assistant',
-                content: `Boundary extracted successfully! ${result.num_vertices || 'Several'} vertices, ${result.area ? result.area.toFixed(0) : 'calculated'} sq units area.\n\nUsable area after setback: ${result.usable_area ? result.usable_area.toFixed(0) : 'N/A'} sq units.\n\nNow describe what rooms you'd like. I'll analyze them for Vastu compliance and structural feasibility.`,
+                content: `Boundary extracted! ${result.num_vertices || 'Several'} vertices, ${result.area ? result.area.toFixed(0) : 'calculated'} sq units.\n\nUsable area after setback: ${result.usable_area ? result.usable_area.toFixed(0) : 'N/A'} sq units.\n\nNow describe your rooms — I'll design the layout for you.`,
                 provider: 'system',
+                stage: 'chat',
             }])
         } else {
             setMessages(prev => [...prev, {
@@ -237,75 +313,151 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
 
     const getProviderBadge = (provider) => {
         const badges = {
-            grok: { label: 'Grok', color: '#8b5cf6', bg: '#ede9fe' },
-            groq: { label: 'Groq', color: '#f97316', bg: '#fff7ed' },
-            fallback: { label: 'Offline', color: '#6b7280', bg: '#f3f4f6' },
-            system: { label: 'System', color: '#059669', bg: '#ecfdf5' },
-            error: { label: 'Error', color: '#dc2626', bg: '#fef2f2' },
+            grok: { label: 'AI', color: '#000', bg: '#f0f0f0' },
+            groq: { label: 'AI', color: '#000', bg: '#f0f0f0' },
+            fallback: { label: 'Offline', color: '#666', bg: '#f0f0f0' },
+            system: { label: 'System', color: '#333', bg: '#f0f0f0' },
+            error: { label: 'Error', color: '#333', bg: '#eee' },
         }
         return badges[provider] || badges.fallback
     }
 
     const renderScoreBadge = (score, label) => {
-        const color = score >= 8 ? '#059669' : score >= 5 ? '#d97706' : '#dc2626'
-        const bg = score >= 8 ? '#ecfdf5' : score >= 5 ? '#fffbeb' : '#fef2f2'
         return (
             <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
                 padding: '0.15rem 0.5rem', borderRadius: '99px',
-                fontSize: '0.72rem', fontWeight: 700, color, background: bg,
-                border: `1px solid ${color}20`,
+                fontSize: '0.72rem', fontWeight: 700, color: '#000', background: '#f0f0f0',
+                border: '1px solid #ddd',
             }}>
                 {label}: {score}/10
             </span>
         )
     }
 
+    // Get stage index for progress bar
+    const currentStageIdx = STAGE_ORDER.indexOf(currentStage)
+
+    // Stage-specific typing message
+    const getTypingMessage = () => {
+        switch (currentStage) {
+            case 'chat': return 'AI Architect is thinking...'
+            case 'extraction': return 'Extracting requirements...'
+            case 'design': return 'Generating layout...'
+            case 'validation': return 'Validating design...'
+            case 'generation': return 'Creating floor plan...'
+            default: return 'Processing...'
+        }
+    }
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/* Header with AI provider status */}
+            {/* Pipeline Stage Progress Indicator */}
             <div style={{
-                padding: '0.5rem 0.75rem',
-                background: 'linear-gradient(135deg, #7c3aed08 0%, #6d28d908 100%)',
-                border: '1px solid #8b5cf620',
+                padding: '0.6rem 0.75rem',
+                background: '#f7f7f7',
+                border: '1px solid #e0e0e0',
                 borderRadius: 'var(--radius-sm)',
                 marginBottom: '0.5rem',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>AI</span>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#5b21b6' }}>
-                        AI Design Advisor
-                    </span>
-                    <span style={{
-                        width: 8, height: 8, borderRadius: 99,
-                        background: wsReady ? '#10b981' : '#f59e0b',
-                        display: 'inline-block',
-                    }} />
+                {/* Header row */}
+                <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    marginBottom: '0.5rem',
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#000' }}>
+                            AI Design Pipeline
+                        </span>
+                        <span style={{
+                            width: 8, height: 8, borderRadius: 99,
+                            background: wsReady ? '#333' : '#999',
+                            display: 'inline-block',
+                        }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.3rem' }}>
+                        {plan && (
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={handleReviewPlan}
+                                disabled={isReviewing}
+                                style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                            >
+                                {isReviewing ? '...' : 'AI Review'}
+                            </button>
+                        )}
+                        {extractedData.rooms?.length > 0 && extractedData.total_area && (
+                            <button
+                                className="btn btn-primary btn-sm"
+                                onClick={handleGenerateFromAI}
+                                disabled={loading}
+                                style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                            >
+                                Generate
+                            </button>
+                        )}
+                    </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.3rem' }}>
-                    {plan && (
-                        <button
-                            className="btn btn-secondary btn-sm"
-                            onClick={handleReviewPlan}
-                            disabled={isReviewing}
-                            style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
-                        >
-                            {isReviewing ? '...' : ''} AI Review
-                        </button>
-                    )}
-                    {extractedData.rooms?.length > 0 && extractedData.total_area && (
-                        <button
-                            className="btn btn-primary btn-sm"
-                            onClick={handleGenerateFromAI}
-                            disabled={loading}
-                            style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
-                        >
-                            Generate
-                        </button>
-                    )}
+
+                {/* Stage progress bar */}
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: '0.15rem',
+                }}>
+                    {PIPELINE_STAGES.map((stage, idx) => {
+                        const isActive = stage.key === currentStage
+                        const isComplete = currentStageIdx > idx || currentStage === 'complete'
+                        const isPending = currentStageIdx < idx && currentStage !== 'complete'
+
+                        return (
+                            <div key={stage.key} style={{
+                                display: 'flex', alignItems: 'center', flex: 1,
+                            }}>
+                                <div style={{
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                                    flex: 1, position: 'relative',
+                                }}>
+                                    {/* Stage dot/icon */}
+                                    <div style={{
+                                        width: isActive ? 28 : 22,
+                                        height: isActive ? 28 : 22,
+                                        borderRadius: '50%',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        fontSize: isActive ? '0.8rem' : '0.65rem',
+                                        fontWeight: 700,
+                                        background: isComplete ? '#000'
+                                            : isActive ? '#333'
+                                                : '#e0e0e0',
+                                        color: (isComplete || isActive) ? '#fff' : '#999',
+                                        transition: 'all 0.3s ease',
+                                        boxShadow: isActive ? '0 0 0 3px rgba(0,0,0,0.1)' : 'none',
+                                    }}>
+                                        {isComplete ? '✓' : stage.icon}
+                                    </div>
+                                    {/* Stage label */}
+                                    <span style={{
+                                        fontSize: '0.6rem',
+                                        fontWeight: isActive ? 700 : 500,
+                                        color: isActive ? '#000' : isComplete ? '#333' : '#999',
+                                        marginTop: '0.2rem',
+                                        whiteSpace: 'nowrap',
+                                    }}>
+                                        {stage.label}
+                                    </span>
+                                </div>
+                                {/* Connector line */}
+                                {idx < PIPELINE_STAGES.length - 1 && (
+                                    <div style={{
+                                        flex: 0.5,
+                                        height: 2,
+                                        background: currentStageIdx > idx || currentStage === 'complete'
+                                            ? '#000' : '#e0e0e0',
+                                        marginBottom: '1rem',
+                                        transition: 'background 0.3s ease',
+                                    }} />
+                                )}
+                            </div>
+                        )
+                    })}
                 </div>
             </div>
 
@@ -314,6 +466,30 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
                 {messages.map((msg, i) => {
                     const badge = msg.provider ? getProviderBadge(msg.provider) : null
                     const isLongMessage = msg.content && msg.content.length > 300
+                    const isTransition = msg.stageTransition
+
+                    // Stage transition messages get special styling
+                    if (isTransition) {
+                        return (
+                            <div key={i} style={{
+                                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                padding: '0.4rem 0.8rem',
+                                margin: '0.3rem 0',
+                                background: 'linear-gradient(135deg, #ede9fe, #ddd6fe)',
+                                borderRadius: 'var(--radius-sm)',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                                color: '#5b21b6',
+                                border: '1px solid #c4b5fd40',
+                            }}>
+                                <span style={{
+                                    animation: 'spin 1s linear infinite',
+                                    display: 'inline-block',
+                                }}>⚙️</span>
+                                {msg.content}
+                            </div>
+                        )
+                    }
 
                     return (
                         <div key={i} className={`chat-bubble ${msg.role}`} style={{
@@ -334,6 +510,16 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
                                         {badge.label}
                                     </span>
                                     {msg.designScore > 0 && renderScoreBadge(msg.designScore, 'Design')}
+                                    {msg.stage && msg.stage !== 'chat' && (
+                                        <span style={{
+                                            fontSize: '0.65rem', fontWeight: 600,
+                                            color: '#7c3aed', background: '#f5f3ff',
+                                            padding: '0.1rem 0.35rem', borderRadius: '99px',
+                                            border: '1px solid #7c3aed20',
+                                        }}>
+                                            Stage: {msg.stage}
+                                        </span>
+                                    )}
                                 </div>
                             )}
 
@@ -397,17 +583,71 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
                                 ))
                             )}
 
+                            {/* Requirements JSON display */}
+                            {msg.requirementsJson && (
+                                <div style={{
+                                    marginTop: '0.5rem', padding: '0.5rem 0.6rem',
+                                    background: '#f5f5f5', borderRadius: '6px',
+                                    border: '1px solid #ddd',
+                                    fontSize: '0.72rem', fontFamily: 'monospace',
+                                    maxHeight: '200px', overflowY: 'auto',
+                                }}>
+                                    <strong style={{ color: '#000', display: 'block', marginBottom: '0.3rem' }}>
+                                        Extracted Requirements:
+                                    </strong>
+                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#333' }}>
+                                        {JSON.stringify(msg.requirementsJson, null, 2)}
+                                    </pre>
+                                </div>
+                            )}
+
+                            {/* Validation report display */}
+                            {msg.validationReport && (
+                                <div style={{
+                                    marginTop: '0.5rem', padding: '0.5rem 0.6rem',
+                                    background: '#f5f5f5',
+                                    borderRadius: '6px',
+                                    border: '1px solid #ddd',
+                                    fontSize: '0.72rem',
+                                }}>
+                                    <strong style={{
+                                        color: '#000',
+                                        display: 'block', marginBottom: '0.3rem',
+                                    }}>
+                                        {msg.validationReport.compliant ? 'Design Compliant' : 'Issues Found'}
+                                    </strong>
+                                    {msg.validationReport.issues?.length > 0 && (
+                                        <div>
+                                            {msg.validationReport.issues.map((issue, ii) => (
+                                                <div key={ii} style={{ color: '#333', marginTop: '0.1rem' }}>
+                                                    - {issue}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {msg.validationReport.suggestions?.length > 0 && (
+                                        <div style={{ marginTop: '0.3rem' }}>
+                                            {msg.validationReport.suggestions.map((s, si) => (
+                                                <div key={si} style={{ color: '#555', marginTop: '0.1rem' }}>
+                                                    {s}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Vastu recommendations */}
                             {msg.vastuRecommendations?.length > 0 && (
                                 <div style={{
                                     marginTop: '0.5rem', padding: '0.4rem 0.6rem',
-                                    background: '#fef3c7', borderRadius: '6px',
-                                    border: '1px solid #fbbf24',
+                                    background: '#f5f5f5', borderRadius: '6px',
+                                    border: '1px solid #ddd',
                                     fontSize: '0.75rem',
                                 }}>
-                                    <strong style={{ color: '#92400e' }}>Vastu:</strong>
+                                    <strong style={{ color: '#000' }}>Vastu:</strong>
                                     {msg.vastuRecommendations.map((v, vi) => (
-                                        <div key={vi} style={{ marginTop: '0.2rem', color: '#78350f' }}>
+                                        <div key={vi} style={{ marginTop: '0.2rem', color: '#333' }}>
                                             - {v.room}: {v.recommended_direction} -- {v.reason}
                                         </div>
                                     ))}
@@ -451,7 +691,7 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
                         <div className="typing-dot" />
                         <div className="typing-dot" />
                         <span style={{ fontSize: '0.72rem', color: '#7c3aed', marginLeft: '0.3rem', fontWeight: 600 }}>
-                            Grok is thinking...
+                            {getTypingMessage()}
                         </span>
                     </div>
                 )}
@@ -531,8 +771,14 @@ export default function AIDesignChat({ onGenerate, onBoundaryUpload, loading, pr
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder={loading ? 'Generating plan...' : 'Describe your dream home to the AI architect...'}
-                    disabled={loading}
+                    placeholder={
+                        currentStage === 'chat'
+                            ? 'Describe your dream home...'
+                            : loading
+                                ? 'Processing...'
+                                : 'Type a message...'
+                    }
+                    disabled={loading || (currentStage !== 'chat' && currentStage !== 'complete')}
                 />
                 <button
                     className="btn btn-primary btn-sm"
